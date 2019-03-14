@@ -399,6 +399,9 @@ func doSpecialArrayComparison(
 	case QSArraySelLen:
 		return cmpFunc(reflect.ValueOf(l))
 	case QSArraySelAny:
+		if l == 0 {
+			return false, nil
+		}
 		for i := 0; i < l; i++ {
 			passed, err := cmpFunc(v.Index(i))
 			if err != nil {
@@ -410,6 +413,9 @@ func doSpecialArrayComparison(
 		}
 		return false, nil
 	case QSArraySelAll:
+		if l == 0 {
+			return false, nil
+		}
 		for i := 0; i < l; i++ {
 			passed, err := cmpFunc(v.Index(i))
 			if err != nil {
