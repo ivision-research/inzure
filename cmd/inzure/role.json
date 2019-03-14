@@ -1,0 +1,10 @@
+{
+   "Actions": [
+       "*/read",
+        "Microsoft.Storage/storageAccounts/listKeys/action"
+   ],
+   "AssignableScopes": [
+   ],
+   "Description": "Allows automated auditing.",
+   "Name": "Inzure Tool"
+}

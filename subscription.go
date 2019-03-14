@@ -1,0 +1,486 @@
+package inzure
+
+import (
+	"context"
+	"log"
+	"os"
+	"sync"
+	"time"
+)
+
+//go:generate stringer -type SearchTarget
+
+// SearchTarget is a target available for searching through this package
+type SearchTarget uint
+
+const (
+	// TargetSearchUnset is present to make the zero value of a SearchTarget
+	// indicate it wasn't set
+	TargetSearchUnset SearchTarget = iota
+	TargetStorageAccounts
+	TargetNetwork
+	TargetAppService
+	TargetDataLakes
+	TargetSQL
+	TargetRedis
+	TargetRecommendations
+	TargetAPIs
+	TargetKeyVaults
+	TargetCosmosDBs
+	TargetLoadBalancers
+	TargetPostgres
+)
+
+const (
+	// TargetSearchUnsetString is the string value for TargetSearchUnset
+	TargetSearchUnsetString     = "TargetSearchUnset"
+	TargetStorageAccountsString = "storage"
+	TargetNetworkString         = "network"
+	TargetAppServiceString      = "apps"
+	TargetDataLakesString       = "datalakes"
+	TargetSQLString             = "sql"
+	TargetRedisString           = "redis"
+	TargetRecommendationsString = "recommendations"
+	TargetAPIsString            = "apis"
+	TargetKeyVaultsString       = "keyvaults"
+	TargetCosmosDBsString       = "cosmosdbs"
+	TargetLoadBalancersString   = "loadbalancers"
+	TargetPostgresString        = "postgres"
+)
+
+// AvailableTargets is a map containing all available targets for easy lookup
+var AvailableTargets = map[string]SearchTarget{
+	TargetStorageAccountsString: TargetStorageAccounts,
+	TargetNetworkString:         TargetNetwork,
+	TargetAppServiceString:      TargetAppService,
+	TargetDataLakesString:       TargetDataLakes,
+	TargetSQLString:             TargetSQL,
+	TargetRedisString:           TargetRedis,
+	TargetRecommendationsString: TargetRecommendations,
+	TargetAPIsString:            TargetAPIs,
+	TargetKeyVaultsString:       TargetKeyVaults,
+	TargetCosmosDBsString:       TargetCosmosDBs,
+	TargetLoadBalancersString:   TargetLoadBalancers,
+	TargetPostgresString:        TargetPostgres,
+}
+
+// Subscription is an entire Azure subscription. This struct can be used as
+// the entrypoint for the entire analysis.
+//
+// Subscriptions should not be instantiated directly, use the NewSubscription
+// function.
+type Subscription struct {
+	ID             string
+	ResourceGroups map[string]*ResourceGroup
+	AuditDate      time.Time
+
+	Recommendations []*Recommendation
+
+	ClassicStorageAccounts []*StorageAccount
+
+	quiet         bool
+	classicKey    []byte
+	searchTargets map[SearchTarget]struct{}
+}
+
+// NewSubscription is used to create a Subscription that is ready to be used.
+func NewSubscription(id string) Subscription {
+	return Subscription{
+		ID:                     id,
+		classicKey:             nil,
+		AuditDate:              time.Now(),
+		quiet:                  false,
+		Recommendations:        make([]*Recommendation, 0),
+		ResourceGroups:         make(map[string]*ResourceGroup),
+		searchTargets:          make(map[SearchTarget]struct{}),
+		ClassicStorageAccounts: make([]*StorageAccount, 0),
+	}
+}
+
+// SetQuiet sets whether to log progress or not. Typically the SearchAllTargets
+// method will give you some info that it is actually doing some work. To
+// disable this use SetQuiet(true).
+func (s *Subscription) SetQuiet(quiet bool) {
+	s.quiet = quiet
+}
+
+// SetClassicKey sets the key to use for classic accounts. If this is non nil
+// classic counts will also be searched.
+func (s *Subscription) SetClassicKey(key []byte) {
+	s.classicKey = key
+}
+
+// UnsetTarget removes a SearchTarget
+func (s *Subscription) UnsetTarget(tag SearchTarget) *Subscription {
+	delete(s.searchTargets, tag)
+	return s
+}
+
+// AddTarget sets the given SearchTarget to be searched.
+func (s *Subscription) AddTarget(tag SearchTarget) *Subscription {
+	if _, ok := s.searchTargets[tag]; !ok {
+		s.searchTargets[tag] = struct{}{}
+	}
+	return s
+}
+
+func (s *Subscription) log(f string, p ...interface{}) {
+	if !s.quiet {
+		log.SetOutput(os.Stdout)
+		log.Printf(f, p...)
+	}
+}
+
+// SearchAllTargets searches all targets that are set with the AddTarget method
+// The passed error channel is closed when this method is complete. If a
+// classic key was given to this Subscription then this function also searches
+// for classic items (StorageAccounts, VirtualMachines, NSGs, etc)
+//
+// The returned errors are not guaranteed to be AzureAPIError pointers.
+//
+// Note: At the moment the passed context is only useful for Azure SDK methods
+// and has no direct effect on this method.
+func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
+	defer close(ec)
+	var wg sync.WaitGroup
+	azure, err := NewAzureAPI()
+	if err != nil {
+		ec <- err
+		return
+	}
+	if s.classicKey != nil {
+		s.log("Using key to enable classic accounts on %s\n", s.ID)
+		if err := azure.EnableClassic(s.classicKey, s.ID); err != nil {
+			ec <- err
+			return
+		}
+
+	}
+	s.log("Starting search for %s\n", s.ID)
+	defer s.log("Finished search for %s\n", s.ID)
+	s.AuditDate = time.Now()
+	// Classic resources need to live at the base of the subscription because
+	// they are not tied to a resource group.
+	if s.classicKey != nil {
+		wg.Add(1)
+		go s.doClassic(ctx, azure, &wg, ec)
+	}
+
+	if _, ok := s.searchTargets[TargetRecommendations]; ok {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.log("Searching for recommendations on `%s`\n", s.ID)
+			defer s.log("Done searching for recommendations\n")
+			for rec := range azure.GetRecommendations(ctx, s.ID, ec) {
+				s.log("Found recommendation `%s`\n", rec.Meta.Name)
+				s.Recommendations = append(s.Recommendations, rec)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.log("Searching for Resource Groups on `%s`\n", s.ID)
+		defer s.log("Done searching for Resource Groups on `%s`\n", s.ID)
+		for rg := range azure.GetResourceGroups(ctx, s.ID, ec) {
+
+			s.log("Found resource group `%s`\n", rg.Meta.Name)
+			s.ResourceGroups[rg.Meta.Name] = rg
+			if _, ok := s.searchTargets[TargetStorageAccounts]; ok {
+				wg.Add(1)
+				go s.storageToResourceGroup(ctx, azure, &wg, ec, rg)
+			}
+			if _, do := s.searchTargets[TargetAppService]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					defer wg.Done()
+					s.log("Searching for App Services in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for App Services in `%s`\n", g.Meta.Name)
+					for wa := range azure.GetWebApps(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found Azure App Service item `%s`\n", wa.Meta.Name)
+						g.WebApps = append(g.WebApps, wa)
+					}
+				}(rg)
+			}
+			if _, do := s.searchTargets[TargetDataLakes]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Data Lake Stores in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for Data Lake Stores in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for dl := range azure.GetDataLakeStores(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found Data Lake Store `%s`\n", dl.Meta.Name)
+						g.DataLakeStores = append(g.DataLakeStores, dl)
+					}
+				}(rg)
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Data Lake Analytics in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for Data Lake Analytics in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for dl := range azure.GetDataLakeAnalytics(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found Data Lake Analytics `%s`\n", dl.Meta.Name)
+						g.DataLakeAnalytics = append(g.DataLakeAnalytics, dl)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetRedis]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Redis servers in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for Redis servers in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for rs := range azure.GetRedisServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found Redis Server `%s`\n", rs.Meta.Name)
+						g.RedisServers = append(g.RedisServers, rs)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetPostgres]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Postgres servers in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for Postgres servers in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for serv := range azure.GetPostgresServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found Postgres server `%s`\n", serv.Meta.Name)
+						g.PostgresServers = append(g.PostgresServers, serv)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetSQL]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for SQL servers in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for SQL servers in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for serv := range azure.GetSQLServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found SQL server `%s`\n", serv.Meta.Name)
+						g.SQLServers = append(g.SQLServers, serv)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetAPIs]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for APIs in `%s`\n", g.Meta.Name)
+					defer s.log("Finished searching for APIs in `%s`\n", g.Meta.Name)
+					defer wg.Done()
+					for apiServ := range azure.GetAPIs(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found API Service `%s`\n", apiServ.Meta.Name)
+						g.APIServices = append(g.APIServices, apiServ)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetKeyVaults]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Key Vaults on subscription")
+					defer s.log("Finished searching for Key Vaults")
+					defer wg.Done()
+					for kv := range azure.GetKeyVaults(ctx, s.ID, g.Meta.Name, ec) {
+						s.log("Found Key Vault `%s`\n", kv.Meta.Name)
+						g.KeyVaults = append(g.KeyVaults, kv)
+					}
+				}(rg)
+			}
+			if _, do := s.searchTargets[TargetLoadBalancers]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Load Balancers on subscription")
+					defer s.log("Finished searching for Load Balancers")
+					defer wg.Done()
+					for lb := range azure.GetLoadBalancers(ctx, s.ID, g.Meta.Name, ec) {
+						s.log("Found Load Balancer `%s`\n", lb.Meta.Name)
+						g.LoadBalancers = append(g.LoadBalancers, lb)
+					}
+				}(rg)
+			}
+			if _, do := s.searchTargets[TargetCosmosDBs]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("Searching for Cosmos DBs on subscription")
+					defer s.log("Finished searching for Cosmos DBs")
+					defer wg.Done()
+					for db := range azure.GetCosmosDBs(ctx, s.ID, g.Meta.Name, ec) {
+						s.log("Found CosmosDB `%s`\n", db.Meta.Name)
+						g.CosmosDBs = append(g.CosmosDBs, db)
+					}
+				}(rg)
+			}
+
+		}
+	}()
+
+	var nsgs []*NetworkSecurityGroup
+	var vnets []*VirtualNetwork
+	var vms []*VirtualMachine
+	var ifaces []*NetworkInterface
+	var asgs []*ApplicationSecurityGroup
+
+	if _, ok := s.searchTargets[TargetNetwork]; ok {
+		asgs = make([]*ApplicationSecurityGroup, 0, 5)
+		nsgs = make([]*NetworkSecurityGroup, 0, 5)
+		vnets = make([]*VirtualNetwork, 0, 5)
+		vms = make([]*VirtualMachine, 0, 5)
+		ifaces = make([]*NetworkInterface, 0, 5)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.log("Searching for Network Interfaces on subscription")
+			defer s.log("Finished searching for Network Interfaces")
+			for iface := range azure.GetNetworkInterfaces(ctx, s.ID, ec) {
+				s.log("Found network interface `%s`\n", iface.Meta.Name)
+				ifaces = append(ifaces, iface)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			s.log("Searching for Virtual Machines on subscription")
+			defer s.log("Finished searching for Virtual Machines")
+			defer wg.Done()
+			for vm := range azure.GetVirtualMachines(ctx, s.ID, ec) {
+				s.log("Found virtual machine `%s`\n", vm.Meta.Name)
+				vms = append(vms, vm)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			s.log("Searching for Virtual Networks on subscription")
+			defer s.log("Finished searching for Virtual Networks")
+			defer wg.Done()
+			for vn := range azure.GetNetworks(ctx, s.ID, ec) {
+				s.log("Found virtual network `%s`\n", vn.Meta.Name)
+				vnets = append(vnets, vn)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			s.log("Searching for Network Security Groups on subscription")
+			defer s.log("Finished searching for Network Security Groups")
+			defer wg.Done()
+			for nsg := range azure.GetNetworkSecurityGroups(ctx, s.ID, ec) {
+				s.log("Found network security group `%s`\n", nsg.Meta.Name)
+				nsgs = append(nsgs, nsg)
+			}
+		}()
+
+		wg.Add(1)
+		go func() {
+			s.log("Searching for Application Security Groups on subscription")
+			defer s.log("Finished searching for Network Security Groups")
+			defer wg.Done()
+			for asg := range azure.GetApplicationSecurityGroups(ctx, s.ID, ec) {
+				s.log("Found application security group `%s`\n", asg.Meta.Name)
+				asgs = append(asgs, asg)
+			}
+		}()
+	}
+
+	s.log("Waiting for subscription search to finish\n")
+	wg.Wait()
+	// Associate everything that needs to be associated after we've finished
+	// gathering the data.
+	for _, vm := range vms {
+		rg := s.ResourceGroups[vm.Meta.ResourceGroupName]
+		rg.VirtualMachines = append(rg.VirtualMachines, vm)
+		// Swap out the VM's incomplete network interface with a discovered one
+		// if we have it.
+	IFaceLoop:
+		for i, vmiface := range vm.NetworkInterfaces {
+			for _, iface := range ifaces {
+				if vmiface.Meta.Equals(&iface.Meta) {
+					vm.NetworkInterfaces[i] = *iface
+					continue IFaceLoop
+				}
+			}
+		}
+	}
+
+	for _, iface := range ifaces {
+		rg := s.ResourceGroups[iface.Meta.ResourceGroupName]
+		rg.NetworkInterfaces = append(rg.NetworkInterfaces, iface)
+	}
+
+	for _, vn := range vnets {
+		rg := s.ResourceGroups[vn.Meta.ResourceGroupName]
+		rg.VirtualNetworks = append(rg.VirtualNetworks, vn)
+	}
+	for _, nsg := range nsgs {
+		rg := s.ResourceGroups[nsg.Meta.ResourceGroupName]
+		rg.NetworkSecurityGroups = append(rg.NetworkSecurityGroups, nsg)
+	}
+	for _, asg := range asgs {
+		rg := s.ResourceGroups[asg.Meta.ResourceGroupName]
+		rg.ApplicationSecurityGroups = append(rg.ApplicationSecurityGroups, asg)
+	}
+	s.log("Waiting to gather all URLs\n")
+}
+
+// storageToResourceGroup finds and adds fully populated storage accounts
+// to a ResourceGroup
+func (s *Subscription) storageToResourceGroup(
+	ctx context.Context,
+	azure AzureAPI,
+	wg *sync.WaitGroup,
+	ec chan<- error,
+	rg *ResourceGroup) {
+	defer wg.Done()
+	s.log("Searching for storage accounts on `%s`\n", rg.Meta.Name)
+	defer s.log("Finished searching for storage accounts on `%s`\n", rg.Meta.Name)
+	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, ec) {
+		s.log("Found storage account %s\n", sa.Meta.Name)
+		wg.Add(1)
+		rg.StorageAccounts = append(rg.StorageAccounts, sa)
+		go s.handleStorageAccount(ctx, sa, azure, wg, ec)
+	}
+}
+
+// handleStorageAccount fills the StorageAccount's Queues, Tables, Containers,
+// and Files. Note that nothing else should be touching those fields of the
+// passed StorageAccount pointer. This could maybe be ensured with locks, but
+// since this is an internal function I'm going to assume correct usage.
+func (s *Subscription) handleStorageAccount(
+	ctx context.Context,
+	sacc *StorageAccount,
+	azure AzureAPI,
+	wg *sync.WaitGroup,
+	ec chan<- error) {
+	defer wg.Done()
+
+	wg.Add(1)
+	go func(acc *StorageAccount) {
+		s.log("Searching storage account `%s` for containers\n", sacc.Meta.Name)
+		defer s.log("Done searching storage account `%s` for containers\n", sacc.Meta.Name)
+		defer wg.Done()
+		for c := range azure.GetContainers(ctx, acc, ec) {
+			s.log("Found container `%s` in storage account `%s`\n", c.Name, sacc.Meta.Name)
+			acc.Containers = append(acc.Containers, *c)
+		}
+	}(sacc)
+}
+
+func (s *Subscription) doClassic(
+	ctx context.Context,
+	azure AzureAPI,
+	wg *sync.WaitGroup,
+	ec chan<- error) {
+	s.log("Searching for classic storage accounts\n")
+	defer s.log("Finished searching classic storage accounts\n")
+	defer wg.Done()
+	if _, ok := s.searchTargets[TargetStorageAccounts]; ok {
+		for sa := range azure.GetClassicStorageAccounts(ctx, ec) {
+			s.log("Found classic storage account `%s`\n", sa.Meta.Name)
+			wg.Add(1)
+			s.ClassicStorageAccounts = append(s.ClassicStorageAccounts, sa)
+			go s.handleStorageAccount(ctx, sa, azure, wg, ec)
+		}
+	}
+}
