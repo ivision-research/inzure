@@ -26,14 +26,6 @@ var Commands = []cli.Command{
 		Action: internal.CmdGather,
 		Flags:  internal.CmdGatherFlags,
 	},
-	/*
-		{
-			Name:   "view",
-			Usage:  "Start a server to view inzure reports in a browser",
-			Action: internal.CmdView,
-			Flags:  []cli.Flag{},
-		},
-	*/
 	{
 		Name:   "search",
 		Usage:  "Use inzure query strings to quickly search for data in an inzure JSON",
