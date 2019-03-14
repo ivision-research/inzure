@@ -24,10 +24,7 @@ If you'd like to add a new resource here are the recommended steps:
    `Subscription`.
 
 Extra work that could be done is adding a test over the `inzure-test` repo or 
-writing one that can be used as a plugin. You can also add a page for viewing 
-your type in `inzure-view`. Just check the 
-[CONTRIBUTING](cmd/inzure-view/INZURE-VIEW-CONTRIBUTING.md) file there: it is 
-pretty easy to do if you followed the steps above.
+writing one that can be used as a plugin.
 
 ## Types
 
