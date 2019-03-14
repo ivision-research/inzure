@@ -1,0 +1,1 @@
+This directory contains the golex/goyacc files for generating the qs_lexer.go and qs_parser.go files. These files are alreay generated and in this repository in the directory above this one. 
