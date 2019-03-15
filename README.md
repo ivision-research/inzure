@@ -10,7 +10,7 @@ The main item for any inzure based program is the `Subscription` type. You can u
 
 ## Data
 
-The primary purpose of this library is dealing with an Azure Subscription. The interface to an Azure Subscription is the `Subscription` struct and associated JSON files. The data in these JSON files is not intended to be parsed by people. Often, Go pseudo enums are used so you'll see a ton of integer values that are only meaningful when loaded back into a `Subscription`. Various tools are included along with this library to perform actions on this data and the `inzure-view` tool attempts to make some of it more human readable. In general, you should write Go programs that make use of this library and ingest the JSON to figure out what you're looking for.
+The primary purpose of this library is dealing with an Azure Subscription. The interface to an Azure Subscription is the `Subscription` struct and associated JSON files. The data in these JSON files is not intended to be parsed by people. Often, Go pseudo enums are used so you'll see a ton of integer values that are only meaningful when loaded back into a `Subscription`. In general, you should write Go programs that make use of this library and ingest the JSON to figure out what you're looking for.
 
 Most of the data is "security focused" in that it would be useful to anyone performing a security audit of an Azure subscription. Much  of it is directly usable, but some is only indirectly useful. You need to know what you're looking for and why you're looking for it to make good use of this data.
 
