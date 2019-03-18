@@ -548,6 +548,7 @@ func (nsg *NetworkSecurityGroup) AllowsIPToPort(checkIP AzureIPv4, checkPort Azu
 
 // AllowsIP is implementing Firewall for NetworkSecurityGroup
 func (nsg *NetworkSecurityGroup) AllowsIP(checkIP AzureIPv4) (UnknownBool, []PacketRoute, error) {
+	unknownPrecedent := int32((^uint32(0)) >> 1)
 	allowPrecedent := int32((^uint32(0)) >> 1)
 	denyPrecedent := int32((^uint32(0)) >> 1)
 	allowedDestinations := make([]PacketRoute, 0)
@@ -558,10 +559,9 @@ func (nsg *NetworkSecurityGroup) AllowsIP(checkIP AzureIPv4) (UnknownBool, []Pac
 	IPLoop:
 		for _, ip := range rule.SourceIPs {
 			contains := IPContains(ip, checkIP)
-			if contains.Unknown() || contains.NA() {
-				return contains, nil, nil
-			}
-			if contains.True() {
+			if contains.Unknown() {
+				unknownPrecedent = rule.Priority
+			} else if contains.True() {
 				if rule.Allows {
 					if rule.Priority < denyPrecedent {
 						allowPrecedent = rule.Priority
@@ -580,7 +580,9 @@ func (nsg *NetworkSecurityGroup) AllowsIP(checkIP AzureIPv4) (UnknownBool, []Pac
 			}
 		}
 	}
-	if denyPrecedent <= allowPrecedent {
+	if unknownPrecedent <= denyPrecedent && unknownPrecedent <= allowPrecedent {
+		return BoolUnknown, nil, nil
+	} else if denyPrecedent <= allowPrecedent {
 		return BoolFalse, nil, nil
 	}
 	return BoolTrue, allowedDestinations, nil
