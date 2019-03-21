@@ -125,14 +125,6 @@ type AzureIPv4 interface {
 	// AllIPsUint32 is the same as AllIPs except it returns uint32
 	// representations
 	AllIPsUint32() []uint32
-	// RequiresMoreInformation returns whether or not the given IP requires more
-	// information and, if so, what information it requires. Some IPs in Azure
-	// are actually tags such as Internet, VirtualNetwork, and AzureLoadBalancer
-	// and need extra information to be usable.
-	//RequiresMoreInformation() AzureIPExtraInfo
-	// UpdateWithMoreInformation will take the required information out of the
-	// given interface.
-	//UpdateWithMoreInformation(AzureIPExtraInfo, interface{})
 	String() string
 	json.Marshaler
 	json.Unmarshaler
@@ -909,6 +901,10 @@ func (s *ipv4Impl) FromAzure(az string) {
 			// https://docs.microsoft.com/en-us/azure/virtual-network/security-overview#service-tags
 			// https://docs.microsoft.com/en-us/azure/virtual-network/security-overview#azure-platform-considerations
 			// This correspsonds to the IP addresses: 168.63.129.16 and 169.254.169.254
+			//
+			// I'm not sure this is the best idea though? I'm going to leave
+			// this as is, but there is no mechanism to say "hey, that isn't
+			// right anymore" which might be an issue with maintainability..
 			s.FromAzure("168.63.129.16,169.254.169.254")
 		default:
 			s.abstract = AzureAbstractIPUnknown
@@ -1082,7 +1078,6 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 		if findCont.True() && findBegin == ipMin && findEnd == ipMax {
 			return BoolFalse
 		}
-
 		return BoolUnknown
 	}
 

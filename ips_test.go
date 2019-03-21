@@ -363,3 +363,54 @@ func TestAzureIPJSON(t *testing.T) {
 		t.Fatalf("unmarshal mangled IP: expected = %s got = %s", single, into.String())
 	}
 }
+
+var specialIPs = []string{
+	"Internet",
+	"AzureLoadBalancer",
+	"VirtualNetwork",
+}
+
+func TestIPSSpecialContainThemselves(t *testing.T) {
+	for _, ipS := range specialIPs {
+		ip1 := NewAzureIPv4FromAzure(ipS)
+		ip2 := NewAzureIPv4FromAzure(ipS)
+
+		contains := IPContains(ip1, ip2)
+		if !contains.True() {
+			t.Fatalf("%s did not contain itself: %v", ipS, contains)
+		}
+	}
+}
+
+func TestIPSepcialDontContainEachother(t *testing.T) {
+	// Note that we are skipping AzureLoadBalancer due to the ability to get
+	// a concrete IP for this rule.
+	for _, ipS := range specialIPs {
+		if ipS == "AzureLoadBalancer" {
+			continue
+		}
+		for _, ipS2 := range specialIPs {
+			if ipS == ipS2 || ipS2 == "AzureLoadBalancer" {
+				continue
+			}
+
+			ip1 := NewAzureIPv4FromAzure(ipS)
+			ip2 := NewAzureIPv4FromAzure(ipS2)
+
+			contains := IPContains(ip1, ip2)
+			if !contains.False() {
+				t.Fatalf("special IPs shouldn't contain eachother %s %s: %v", ipS, ipS2, contains)
+			}
+		}
+	}
+}
+
+func TestIPStarContainsSpecials(t *testing.T) {
+	star := NewAzureIPv4FromAzure("*")
+	for _, ipS := range specialIPs {
+		contains := IPContains(star, NewAzureIPv4FromAzure(ipS))
+		if !contains.True() {
+			t.Fatalf("* IP didn't contain special %s: %v", ipS, contains)
+		}
+	}
+}
