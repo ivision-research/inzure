@@ -24,9 +24,12 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"gather",
 		map[string]autocomplete.CompleteFunc{
-			"cert": autocomplete.FileAutoComplete,
-			"dir":  autocomplete.DirAutoComplete,
-			"o":    autocomplete.FileAutoComplete,
+			"cert":     autocomplete.FileAutoComplete,
+			"dir":      autocomplete.DirAutoComplete,
+			"o":        autocomplete.FileAutoComplete,
+			"sub-file": autocomplete.FileAutoComplete,
+			"targets":  autocomplete.TargetsAutoComplete,
+			"exclude":  autocomplete.TargetsAutoComplete,
 		},
 	)
 

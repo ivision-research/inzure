@@ -9,6 +9,21 @@ import (
 	"github.com/CarveSystems/inzure"
 )
 
+func TargetsAutoComplete(inc string, args []string) Completions {
+	comps := make(Completions, 0, 5)
+	for k, v := range inzure.AvailableTargets {
+		if v == 0 {
+			continue
+		}
+		if strings.HasPrefix(k, inc) {
+			comps = append(comps, Completion{
+				Completion: k,
+			})
+		}
+	}
+	return comps
+}
+
 func InzureJSONAutoComplete(inc string, args []string) Completions {
 	files := FileAutoComplete(inc, args)
 	filtered := make(Completions, 0, 5)

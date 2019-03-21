@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +18,7 @@ import (
 
 var (
 	GatherCertPath         string
-	GatherSubscriptions    []string
+	GatherSubscriptions    []inzure.SubscriptionID
 	GatherSubscriptionFile string
 	GatherTargets          string
 	ExcludeGatherTargets   string
@@ -31,7 +30,7 @@ var CmdGatherFlags = []cli.Flag{
 	cli.StringSliceFlag{
 		Name:   "sub",
 		EnvVar: inzure.EnvSubscription,
-		Usage:  "Subscriptions to scan. This flag can be specified more than once or you can use --sub-file instead.",
+		Usage:  "Subscription UUID to scan (optional alias specified by an = and alias after the UUID). This flag can be specified more than once or you can use --sub-file instead.",
 	},
 	cli.StringFlag{
 		Name:        "sub-file",
@@ -82,7 +81,9 @@ func scanGetSubscriptionsFromFile() error {
 		if GatherVerbose {
 			fmt.Println("Searching subscription:", line)
 		}
-		GatherSubscriptions = append(GatherSubscriptions, line)
+		GatherSubscriptions = append(
+			GatherSubscriptions, inzure.SubIDFromString(line),
+		)
 	}
 	return nil
 }
@@ -103,7 +104,7 @@ func CmdGather(c *cli.Context) {
 		os.Exit(0)
 	}
 
-	GatherSubscriptions = c.StringSlice("sub")
+	GatherSubscriptions = inzure.SubIDsFromStrings(c.StringSlice("sub"))
 	if GatherSubscriptions == nil || len(GatherSubscriptions) == 0 {
 		if err := scanGetSubscriptionsFromFile(); err != nil {
 			exitError(1, err.Error())
@@ -122,10 +123,10 @@ func CmdGather(c *cli.Context) {
 	var wg sync.WaitGroup
 	for _, id := range GatherSubscriptions {
 		wg.Add(1)
-		go func(id string) {
+		go func(subID inzure.SubscriptionID) {
 			defer wg.Done()
 
-			sub := inzure.NewSubscription(id)
+			sub := inzure.NewSubscriptionFromID(subID)
 			sub.SetQuiet(!GatherVerbose)
 			if GatherTargets != "" {
 				if ExcludeGatherTargets != "" {
@@ -157,7 +158,10 @@ func CmdGather(c *cli.Context) {
 			if GatherCertPath != "" {
 				f, err := os.Open(GatherCertPath)
 				if err != nil {
-					exitError(1, "failed to open class key file %s: %v", GatherCertPath, err)
+					exitError(
+						1, "failed to open classic key file %s: %v",
+						GatherCertPath, err,
+					)
 				}
 				key := make([]byte, 0, 1024)
 				tmp := make([]byte, 256)
@@ -167,7 +171,10 @@ func CmdGather(c *cli.Context) {
 						if err == io.EOF {
 							break
 						} else {
-							exitError(1, "error reading class key file %s: %v", GatherCertPath, err)
+							exitError(
+								1, "error reading classic key file %s: %v",
+								GatherCertPath, err,
+							)
 						}
 					}
 					key = append(key, tmp[:n]...)
@@ -201,8 +208,15 @@ func CmdGather(c *cli.Context) {
 			var fname string
 			sub.SearchAllTargets(ctx, ec)
 			if OutputFile == "" {
-				tString := sub.AuditDate.Format("15:04:05-02-01-2006")
-				fname = path.Join(GatherReportDir, fmt.Sprintf("%s-inzure-%s.json", tString, sub.ID))
+				tString := sub.AuditDate.Format("02-01-2006-15:04")
+				identifier := sub.Alias
+				if identifier == "" {
+					identifier = sub.ID
+				}
+				fname = path.Join(
+					GatherReportDir,
+					fmt.Sprintf("%s-inzure-%s.json", tString, identifier),
+				)
 			} else {
 				fname = OutputFile
 			}
@@ -226,16 +240,8 @@ func CmdGather(c *cli.Context) {
 						"[WARNING] No encryption password was set!",
 					)
 				}
-				b, err := json.Marshal(&sub)
-				if err != nil {
-					errorf("failed to marshal subscription as JSON: %v", err)
-					return
-				}
-				r := bytes.NewReader(b)
-				_, err = r.WriteTo(f)
-				if err != nil {
-					errorf("error writing JSON to %s: %v", fname, err)
-					return
+				if err := json.NewEncoder(f).Encode(&sub); err != nil {
+					errorf("error outputing JSON: %v", err)
 				}
 			}
 		}(id)

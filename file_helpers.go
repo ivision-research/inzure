@@ -12,6 +12,8 @@ func SubscriptionFromFile(fname string) (sub *Subscription, err error) {
 	return SubscriptionFromFilePassword(fname, nil)
 }
 
+// SubscriptionFromFilePassword will load a Subscription from the given
+// encrypted JSON (must have the .enc extension)
 func SubscriptionFromFilePassword(fname string, pw []byte) (sub *Subscription, err error) {
 	var f *os.File
 	f, err = os.Open(fname)

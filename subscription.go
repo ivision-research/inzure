@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,6 +65,37 @@ var AvailableTargets = map[string]SearchTarget{
 	TargetPostgresString:        TargetPostgres,
 }
 
+// SubscriptionID is just a combined UUID and optional Alias for a
+// subscription. Aliases can be useful for human readable contexts.
+type SubscriptionID struct {
+	ID    string
+	Alias string
+}
+
+// SubIDsFromStrings just warap SubIDFromString with multiple strings.
+func SubIDsFromStrings(ss []string) []SubscriptionID {
+	out := make([]SubscriptionID, len(ss))
+	for i, s := range ss {
+		out[i] = SubIDFromString(s)
+	}
+	return out
+}
+
+// SubIDFromString is a helper function for getting SubscriptionIDs from plain
+// strings. This allows for optional aliasing with the `{UUID}={ALIAS}` syntax.
+func SubIDFromString(s string) SubscriptionID {
+	if !strings.Contains(s, "=") {
+		return SubscriptionID{
+			ID: s,
+		}
+	}
+	idx := strings.Index(s, "=")
+	return SubscriptionID{
+		ID:    s[:idx],
+		Alias: s[idx+1:],
+	}
+}
+
 // Subscription is an entire Azure subscription. This struct can be used as
 // the entrypoint for the entire analysis.
 //
@@ -71,6 +103,7 @@ var AvailableTargets = map[string]SearchTarget{
 // function.
 type Subscription struct {
 	ID             string
+	Alias          string
 	ResourceGroups map[string]*ResourceGroup
 	AuditDate      time.Time
 
@@ -83,10 +116,17 @@ type Subscription struct {
 	searchTargets map[SearchTarget]struct{}
 }
 
-// NewSubscription is used to create a Subscription that is ready to be used.
-func NewSubscription(id string) Subscription {
+// NewSubscriptionFromID creates a usable new Subscription from a
+// SubscriptionID.
+func NewSubscriptionFromID(id SubscriptionID) Subscription {
+	return NewSubscriptionWithAlias(id.ID, id.Alias)
+}
+
+// NewSubscriptionWithAlias creates a usable new Subscription with an alias.
+func NewSubscriptionWithAlias(id, alias string) Subscription {
 	return Subscription{
 		ID:                     id,
+		Alias:                  alias,
 		classicKey:             nil,
 		AuditDate:              time.Now(),
 		quiet:                  false,
@@ -95,6 +135,11 @@ func NewSubscription(id string) Subscription {
 		searchTargets:          make(map[SearchTarget]struct{}),
 		ClassicStorageAccounts: make([]*StorageAccount, 0),
 	}
+}
+
+// NewSubscription is used to create a Subscription that is ready to be used.
+func NewSubscription(id string) Subscription {
+	return NewSubscriptionWithAlias(id, "")
 }
 
 // SetQuiet sets whether to log progress or not. Typically the SearchAllTargets
