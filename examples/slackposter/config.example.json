@@ -1,0 +1,7 @@
+{
+    "queries": [{
+        "q": "/StorageAccounts/*/*/Containers[.Access >= 2 && .Name !like \".*public.*\"]",
+        "template_file": "templates/containers.tpl"
+    }],
+    "slack_url": "https://hooks.slack.com/FILLTHISIN"
+}
