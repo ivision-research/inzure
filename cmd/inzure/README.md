@@ -1,6 +1,6 @@
 # inzure
 
-Automated data consolidation for Azure. The goal of this tool is very simple: gather all data you'll want for an assessment of the security of an Azure cloud subscription. This tool does that and only that. The data is given to you as a large JSON structure. Other tools are designed to analyse that data or transform it as you wish. You can also use the data structures defined in the package at the base of this repository to create your own tool.
+Automated data consolidation for Azure. The goal of this tool is very simple: gather all data you'll want for an assessment of the security of an Azure cloud subscription and provide a simple interface for inspecting that data.
 
 ## Output Data
 
@@ -24,7 +24,7 @@ Then you'll login using:
 az login
 ```
 
-Next, you will create a [custom role](https://docs.microsoft.com/en-us/azure/active-directory/role-based-access-control-custom-roles) to use with [Role Based Access Control](https://docs.microsoft.com/en-us/azure/active-directory/role-based-access-control-configure). The [role.json](role.json) file defines this new role with the permissions this tool needs. You need to add your subscription ID to this role: you can either do this manually or we have provided an executable [python script](add_subscription.py) that can do it for you (note this will add all subscriptions that are in Azure's local cache, this is why we cleared it earlier). After updating the file or running the script, run:
+Next, you will create a [custom role](https://docs.microsoft.com/en-us/azure/active-directory/role-based-access-control-custom-roles) to use with [Role Based Access Control](https://docs.microsoft.com/en-us/azure/active-directory/role-based-access-control-configure). The [role.json](role.json) file defines this new role with the permissions this tool needs. Note that the `listkeys` permission is required for all container information, but the tool will run without it. You need to add your subscription ID to this role: you can either do this manually or we have provided an executable [python script](add_subscription.py) that can do it for you (note this will add all subscriptions that are in Azure's local cache, this is why we cleared it earlier). After updating the file or running the script, run:
 
 ```.sh
 az role definition create --role-definition @role.json
