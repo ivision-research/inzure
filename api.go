@@ -3,7 +3,8 @@ package inzure
 import (
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2017-03-01/apimanagement"
+	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
+	"github.com/Azure/go-autorest/autorest/date"
 )
 
 type APIService struct {
@@ -18,9 +19,11 @@ type APIService struct {
 	VNetType         string
 	SubnetRef        ResourceID
 	APIs             []*API
+	Users            []*APIServiceUser
 	PrimaryKey       string
 	SecondaryKey     string
 	AccessEnabled    UnknownBool
+	SignupEnabled    UnknownBool
 	Backends         []*APIBackend
 	Products         []*APIServiceProduct
 }
@@ -28,6 +31,7 @@ type APIService struct {
 func NewEmptyAPIService() *APIService {
 	s := &APIService{
 		APIs:             make([]*API, 0),
+		Users:            make([]*APIServiceUser, 0),
 		StaticIPs:        make([]AzureIPv4, 0),
 		Backends:         make([]*APIBackend, 0),
 		CustomProperties: make(map[string]string),
@@ -66,6 +70,14 @@ func (as *APIService) FromAzure(az *apimanagement.ServiceResource) {
 	if vc != nil && vc.SubnetResourceID != nil {
 		as.SubnetRef.fromID(*vc.SubnetResourceID)
 	}
+}
+
+func (as *APIService) addSignupSettingsFromAzure(az *apimanagement.PortalSignupSettings) {
+	props := az.PortalSignupSettingsProperties
+	if props == nil {
+		return
+	}
+	as.SignupEnabled.FromBoolPtr(az.Enabled)
 }
 
 func (as *APIService) addAccessInfoFromAzure(az *apimanagement.AccessInformationContract) {
@@ -370,4 +382,79 @@ func (a *API) FromAzure(az *apimanagement.APIContract) {
 	}
 	// TODO: OAuth2 settings?
 	a.Online.FromBoolPtr(props.IsOnline)
+}
+
+type APIUserActivationState uint8
+
+const (
+	APIUserStateUnknown APIUserActivationState = iota
+	APIUserStateActive
+	APIUserStatePending
+	APIUserStateBlocked
+	APIUserStateDeleted
+)
+
+func (a *APIUserActivationState) FromAzure(az apimanagement.UserState) {
+	switch az {
+	case apimanagement.UserStateActive:
+		*a = APIUserStateActive
+	case apimanagement.UserStateBlocked:
+		*a = APIUserStateBlocked
+	case apimanagement.UserStateDeleted:
+		*a = APIUserStateDeleted
+	case apimanagement.UserStatePending:
+		*a = APIUserStatePending
+	default:
+		*a = APIUserStateUnknown
+	}
+}
+
+type APIServiceUser struct {
+	FirstName    string
+	LastName     string
+	Email        string
+	RegisteredAt date.Time
+	State        APIUserActivationState
+	Groups       []string
+	Identities   []APIServiceUserIdentity
+}
+
+func NewAPIServiceUser() *APIServiceUser {
+	u := &APIServiceUser{
+		Groups:     make([]string, 0),
+		Identities: make([]APIServiceUserIdentity, 0),
+	}
+	return u
+}
+
+func (asu *APIServiceUser) FromAzure(az *apimanagement.UserContract) {
+	props := az.UserContractProperties
+	if props == nil {
+		return
+	}
+	asu.State.FromAzure(props.State)
+	valFromPtr(&asu.FirstName, props.FirstName)
+	valFromPtr(&asu.LastName, props.LastName)
+	valFromPtr(&asu.Email, props.Email)
+	valFromPtr(&asu.RegisteredAt, props.RegistrationDate)
+	if props.Groups != nil {
+		gs := *props.Groups
+		asu.Groups = make([]string, len(gs))
+		for i, g := range gs {
+			valFromPtr(&asu.Groups[i], g.DisplayName)
+		}
+	}
+	if props.Identities != nil {
+		ids := *props.Identities
+		asu.Identities = make([]APIServiceUserIdentity, len(ids))
+		for i, id := range ids {
+			valFromPtr(&asu.Identities[i].ID, id.ID)
+			valFromPtr(&asu.Identities[i].Provider, id.Provider)
+		}
+	}
+}
+
+type APIServiceUserIdentity struct {
+	Provider string
+	ID       string
 }

@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"github.com/Azure/azure-sdk-for-go/services/advisor/mgmt/2017-04-19/advisor"
-	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2017-03-01/apimanagement"
+	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
 	"github.com/Azure/azure-sdk-for-go/services/classic/management"
 	"github.com/Azure/azure-sdk-for-go/services/classic/management/storageservice"
 	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-04-01/compute"
@@ -192,11 +192,16 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 		sc.Authorizer = impl.authorizer
 		schc := apimanagement.NewAPISchemaClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		schc.Authorizer = impl.authorizer
+		pss := apimanagement.NewSignUpSettingsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
+		pss.Authorizer = impl.authorizer
+		uc := apimanagement.NewUserClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
+		uc.Authorizer = impl.authorizer
 		it, err := sc.ListByResourceGroupComplete(ctx, rg)
 		if err != nil {
 			sendErr(ctx, genericError(sub, ApiT, "ListAPIServices", err), ec)
 			return
 		}
+
 		for it.NotDone() {
 			service := NewEmptyAPIService()
 			s := it.Value()
@@ -224,6 +229,29 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 						break
 					}
 				}
+			}
+
+			usersIt, err := uc.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil)
+			if err != nil {
+				sendErr(ctx, genericError(sub, ApiServiceT, "ListUsers", err), ec)
+			} else {
+				for usersIt.NotDone() {
+					azUser := usersIt.Value()
+					user := NewAPIServiceUser()
+					user.FromAzure(&azUser)
+					service.Users = append(service.Users, user)
+					if err := usersIt.Next(); err != nil {
+						sendErr(ctx, genericError(sub, ApiServiceT, "UserIterator.Next", err), ec)
+						break
+					}
+				}
+			}
+
+			portSign, err := pss.Get(ctx, rg, *s.Name)
+			if err != nil {
+				sendErr(ctx, genericError(sub, ApiServiceT, "GetPortalSignupSettings", err), ec)
+			} else {
+				service.addSignupSettingsFromAzure(&portSign)
 			}
 
 			beIt, err := bc.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil)
