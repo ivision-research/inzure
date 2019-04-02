@@ -91,8 +91,12 @@ func SubIDFromString(s string) SubscriptionID {
 	}
 	idx := strings.Index(s, "=")
 	return SubscriptionID{
-		ID:    s[:idx],
-		Alias: s[idx+1:],
+		ID: s[:idx],
+		Alias: strings.Replace(
+			strings.Replace(
+				s[idx+1:], " ", "_", -1,
+			), string(os.PathSeparator), "_", -1,
+		),
 	}
 }
 
