@@ -24,6 +24,7 @@ var (
 	ExcludeGatherTargets   string
 	GatherReportDir        string
 	GatherVerbose          = false
+	GatherNoListKeys       = false
 )
 
 var CmdGatherFlags = []cli.Flag{
@@ -49,6 +50,11 @@ var CmdGatherFlags = []cli.Flag{
 		Destination: &ExcludeGatherTargets,
 	},
 
+	cli.BoolFlag{
+		Name:        "no-storage-keys",
+		Usage:       "Don't try to use storage account keys. This will also disable container searching.",
+		Destination: &GatherNoListKeys,
+	},
 	cli.BoolFlag{
 		Name:        "v",
 		Usage:       "Verbose output",
@@ -127,6 +133,7 @@ func CmdGather(c *cli.Context) {
 			defer wg.Done()
 
 			sub := inzure.NewSubscriptionFromID(subID)
+			sub.HasListKeysPermission(!GatherNoListKeys)
 			sub.SetQuiet(!GatherVerbose)
 			if GatherTargets != "" {
 				if ExcludeGatherTargets != "" {

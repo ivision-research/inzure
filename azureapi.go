@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 
 	"github.com/Azure/azure-sdk-for-go/services/advisor/mgmt/2017-04-19/advisor"
 	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
@@ -23,7 +25,7 @@ import (
 	sqldb "github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
 	"github.com/Azure/azure-sdk-for-go/services/redis/mgmt/2018-03-01/redis"
 	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2017-05-10/resources"
-	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2017-10-01/storage"
+	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-11-01/storage"
 	"github.com/Azure/azure-sdk-for-go/services/web/mgmt/2018-02-01/web"
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/Azure/go-autorest/autorest"
@@ -82,7 +84,7 @@ type AzureAPI interface {
 	GetApplicationSecurityGroups(ctx context.Context, sub string, ec chan<- error) <-chan *ApplicationSecurityGroup
 	GetWebApps(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *WebApp
 	GetAPIs(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *APIService
-	GetStorageAccounts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *StorageAccount
+	GetStorageAccounts(ctx context.Context, sub string, rg string, lk bool, ec chan<- error) <-chan *StorageAccount
 	GetRedisServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *RedisServer
 	GetContainers(context.Context, *StorageAccount, chan<- error) <-chan *Container
 	GetKeyVaults(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *KeyVault
@@ -988,41 +990,62 @@ func (impl *azureImpl) GetClassicStorageAccounts(ctx context.Context, ec chan<- 
 	return c
 }
 
-func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *StorageAccount {
+func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg string, lk bool, ec chan<- error) <-chan *StorageAccount {
 	c := make(chan *StorageAccount, bufSize)
+
 	go func() {
 		defer close(c)
 		st := storagemgmt.NewAccountsClient(sub)
 		st.Authorizer = impl.authorizer
 		st.BaseURI = impl.env.ResourceManagerEndpoint
-		l, err := st.ListByResourceGroup(ctx, rg)
-		if err != nil {
-			sendErr(ctx, genericError(sub, StorageAccountT, "ListStorageAccounts", err), ec)
-		} else if l.Value != nil {
-			for _, accnt := range *l.Value {
+		// There is a bug in Azure in which the CustomDomain.useSubDomainName
+		// field is coming in as a string but is a bool in the struct itself.
+		// This works around that error by allowing us to try to recover later.
+		st.ResponseInspector = autorest.RespondDecorator(
+			func(r autorest.Responder) autorest.Responder {
+				return autorest.ResponderFunc(func(resp *http.Response) error {
+					err := r.Respond(resp)
+					if err == nil && resp != nil && resp.Body != nil {
+						buf := newByteBuffer()
+						_, err = io.Copy(buf, resp.Body)
+						if err != nil {
+							return err
+						}
+						resp.Body.Close()
+						resp.Body = buf
+					}
+					return err
+				})
+			},
+		)
+
+		handleValue := func(v *[]storagemgmt.Account) {
+			for _, accnt := range *v {
 				sa := new(StorageAccount)
 				sa.FromAzure(accnt)
 				id := sa.Meta
-				lk, err := st.ListKeys(ctx, id.ResourceGroupName, id.Name)
-				if err != nil {
-					er := simpleActionError(id, "ListKeys", err)
-					sendErr(ctx, er, ec)
-				} else if lk.Keys != nil {
-					key := ""
-					for _, k := range *lk.Keys {
-						if k.Value != nil {
-							key = *k.Value
+				if lk {
+					lkr, err := st.ListKeys(ctx, id.ResourceGroupName, id.Name)
+					if err != nil {
+						er := simpleActionError(id, "ListKeys", err)
+						sendErr(ctx, er, ec)
+					} else if lkr.Keys != nil {
+						key := ""
+						for _, k := range *lkr.Keys {
+							if k.Value != nil {
+								key = *k.Value
+							}
 						}
-					}
-					if key == "" {
-						select {
-						case <-ctx.Done():
-							return
-						case c <- sa:
+						if key == "" {
+							select {
+							case <-ctx.Done():
+								return
+							case c <- sa:
+							}
+							continue
 						}
-						continue
+						sa.key = key
 					}
-					sa.key = key
 				}
 				select {
 				case <-ctx.Done():
@@ -1030,6 +1053,48 @@ func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg st
 				case c <- sa:
 				}
 			}
+		}
+
+		l, err := st.ListByResourceGroup(ctx, rg)
+		if err != nil {
+			// This is where we try to recover from the unmarshal error
+			// mentioned above. This isn't a perfect solution, but the
+			// idea here is to check if we got data and a 200 OK and
+			// to try the unmarshl again after replacing quoted bools with
+			// actual bools.
+			res := l.Response.Response
+			if res != nil {
+				buf, _ := l.Response.Response.Body.(*byteBuffer)
+				if res.StatusCode == http.StatusOK && buf.Len() > 0 {
+					fre, _ := regexp.Compile(`"false"`)
+					tre, _ := regexp.Compile(`"true"`)
+					buf = newByteBufferFromBytes(
+						tre.ReplaceAll(
+							fre.ReplaceAll(
+								buf.buf,
+								[]byte("false"),
+							),
+							[]byte("true"),
+						),
+					)
+					// Our solution didn't work so let's report it..
+					err := json.NewDecoder(buf).Decode(&l)
+					if err != nil {
+						sendErr(
+							ctx, genericError(
+								sub, StorageAccountT, "ListStorageAccounts", err,
+							),
+							ec,
+						)
+					} else if l.Value != nil {
+						handleValue(l.Value)
+					}
+					return
+				}
+			}
+			sendErr(ctx, genericError(sub, StorageAccountT, "ListStorageAccounts", err), ec)
+		} else if l.Value != nil {
+			handleValue(l.Value)
 		}
 	}()
 	return c

@@ -116,6 +116,7 @@ type Subscription struct {
 	ClassicStorageAccounts []*StorageAccount
 
 	quiet         bool
+	listKeys      bool
 	classicKey    []byte
 	searchTargets map[SearchTarget]struct{}
 }
@@ -178,6 +179,10 @@ func (s *Subscription) log(f string, p ...interface{}) {
 		log.SetOutput(os.Stdout)
 		log.Printf(f, p...)
 	}
+}
+
+func (s *Subscription) HasListKeysPermission(f bool) {
+	s.listKeys = f
 }
 
 // SearchAllTargets searches all targets that are set with the AddTarget method
@@ -484,7 +489,7 @@ func (s *Subscription) storageToResourceGroup(
 	defer wg.Done()
 	s.log("Searching for storage accounts on `%s`\n", rg.Meta.Name)
 	defer s.log("Finished searching for storage accounts on `%s`\n", rg.Meta.Name)
-	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, ec) {
+	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, s.listKeys, ec) {
 		s.log("Found storage account %s\n", sa.Meta.Name)
 		wg.Add(1)
 		rg.StorageAccounts = append(rg.StorageAccounts, sa)
@@ -502,6 +507,10 @@ func (s *Subscription) handleStorageAccount(
 	azure AzureAPI,
 	wg *sync.WaitGroup,
 	ec chan<- error) {
+	if !s.listKeys {
+		wg.Done()
+		return
+	}
 	defer wg.Done()
 
 	wg.Add(1)
