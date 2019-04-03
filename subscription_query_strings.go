@@ -183,7 +183,7 @@ func (s *Subscription) subresourceValueFromSingleParent(
 		if err != nil {
 			return err
 		}
-		if qs.Subresource.Name == name {
+		if strings.ToLower(qs.Subresource.Name) == name {
 			return setSingleQSValue(v, values.Index(i), qs.Raw)
 		}
 	}
@@ -269,7 +269,7 @@ func getSingle(sub, qs, name string, all []reflect.Value) (reflect.Value, error)
 		if err != nil {
 			return reflect.ValueOf(nil), err
 		}
-		if eName == name {
+		if eName == strings.ToLower(name) {
 			return e, nil
 		}
 	}
