@@ -1,6 +1,10 @@
 package inzure
 
-import sqldb "github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
+import (
+	"strings"
+
+	sqldb "github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
+)
 
 // SQLServer holds all information for a Microsoft SQL server
 type SQLServer struct {
@@ -86,6 +90,12 @@ func (db *SQLDatabase) FromAzure(az *sqldb.Database) {
 			}
 		}
 	}
+}
+
+func (db *SQLDatabase) QueryString() string {
+	c := strings.Count(db.Meta.RawID, "/")
+	server := strings.Split(db.Meta.RawID, "/")[c-2]
+	return "/SQLServers/" + db.Meta.ResourceGroupName + "/" + server + "/Databases/" + db.Meta.Name
 }
 
 func NewEmptySQLDatabase() *SQLDatabase {

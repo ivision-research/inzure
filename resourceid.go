@@ -318,6 +318,7 @@ var qsTagMap = map[AzureResourceTag]string{
 	KeyVaultT:             "KeyVaults",
 	CosmosDBT:             "CosmosDBs",
 	LoadBalancerT:         "LoadBalancers",
+	ApiServiceT:           "APIServices",
 }
 
 func (r *ResourceID) QueryString() (string, error) {
