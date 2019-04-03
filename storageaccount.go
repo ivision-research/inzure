@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/classic/management/storageservice"
-	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2017-10-01/storage"
+	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-11-01/storage"
 	"github.com/Azure/azure-sdk-for-go/storage"
 	"github.com/Azure/go-autorest/autorest/azure"
 )
@@ -101,11 +101,12 @@ func (se *StorageEncryption) FromAzure(enc *storagemgmt.Encryption) {
 // This type is intended to contain information about both classical and
 // managed storage accounts.
 type StorageAccount struct {
-	Meta       ResourceID
-	IsClassic  bool
-	Encryption StorageEncryption
-	HTTPSOnly  UnknownBool
-	Containers []Container
+	Meta         ResourceID
+	IsClassic    bool
+	CustomDomain string
+	Encryption   StorageEncryption
+	HTTPSOnly    UnknownBool
+	Containers   []Container
 
 	key string
 }
@@ -188,6 +189,10 @@ func (sa *StorageAccount) FromAzure(acc storagemgmt.Account) {
 			sa.HTTPSOnly = unknownFromBool(*acc.AccountProperties.EnableHTTPSTrafficOnly)
 		} else {
 			sa.HTTPSOnly = BoolFalse
+		}
+		cd := acc.AccountProperties.CustomDomain
+		if cd != nil {
+			valFromPtr(&sa.CustomDomain, cd.Name)
 		}
 	}
 	sa.Containers = make([]Container, 0)
