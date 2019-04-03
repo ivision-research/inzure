@@ -24,16 +24,17 @@ func TargetsAutoComplete(inc string, args []string) Completions {
 	return comps
 }
 
-func InzureJSONAutoComplete(inc string, args []string) Completions {
-	files := FileAutoComplete(inc, args)
-	filtered := make(Completions, 0, 5)
-	for _, f := range files {
-		ext := filepath.Ext(f.Completion)
-		if ext == ".json" || ext == inzure.EncryptedFileExtension {
-			filtered = append(filtered, f)
+func InzureJSONAutoComplete(inc string, _ []string) Completions {
+	return filterDir(inc, func(info os.FileInfo) (string, bool) {
+		if info.IsDir() {
+			return info.Name() + string(os.PathSeparator), true
 		}
-	}
-	return filtered
+		ext := filepath.Ext(info.Name())
+		if ext == ".json" || ext == inzure.EncryptedFileExtension {
+			return info.Name(), true
+		}
+		return "", false
+	})
 }
 
 func DirAutoComplete(inc string, _ []string) Completions {
@@ -86,7 +87,7 @@ func filterDir(inc string, f func(os.FileInfo) (string, bool)) Completions {
 func FileAutoComplete(inc string, _ []string) Completions {
 	return filterDir(inc, func(info os.FileInfo) (string, bool) {
 		if info.IsDir() {
-			return filepath.Join(info.Name(), ""), true
+			return info.Name() + string(os.PathSeparator), true
 		}
 		return info.Name(), true
 	})
