@@ -404,6 +404,7 @@ type AppServiceEnvironment struct {
 // WebApp holds all of the required information for an Azure mananged web app.
 type WebApp struct {
 	Meta                   ResourceID
+	Slot                   string
 	Enabled                UnknownBool
 	RemoteDebuggingEnabled UnknownBool
 	HasLocalSQL            UnknownBool
@@ -490,7 +491,19 @@ func (w *WebApp) fillConfigInfo(conf *web.SiteConfig) {
 
 func (w *WebApp) FromAzure(aw *web.Site) {
 	if aw.ID != nil {
-		w.Meta.fromID(*aw.ID)
+		var rid ResourceID
+		rid.fromID(*aw.ID)
+		if rid.Tag == WebAppSlotT {
+			w.Slot = rid.Name
+			c := strings.Count(rid.RawID, "/")
+			newID := strings.Join(
+				strings.Split(rid.RawID, "/")[:c-1],
+				"/",
+			)
+			w.Meta.fromID(newID)
+		} else {
+			w.Meta = rid
+		}
 	}
 
 	w.HTTPSOnly.FromBoolPtr(aw.HTTPSOnly)
