@@ -216,7 +216,10 @@ func CmdGather(c *cli.Context) {
 			sub.SearchAllTargets(ctx, ec)
 			if OutputFile == "" {
 				tString := sub.AuditDate.Format("02-01-2006-15:04")
-				identifier := sub.Alias
+				identifier := strings.Replace(
+					strings.Replace(sub.Alias, " ", "-", -1),
+					string(os.PathSeparator), "_", -1,
+				)
 				if identifier == "" {
 					identifier = sub.ID
 				}
