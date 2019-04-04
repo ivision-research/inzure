@@ -42,7 +42,7 @@ func (qs *QueryString) String() string {
 func (qs *QueryString) Parse(s string) error {
 	l := newLexer(s)
 	if yyParse(l) != 0 {
-		return l.errs[0]
+		return l.err
 	}
 	*qs = l.result
 	qs.Raw = s

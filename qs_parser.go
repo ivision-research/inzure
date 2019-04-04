@@ -9,6 +9,7 @@ import (
 	__yyfmt__ "fmt"
 	"reflect"
 	"strconv"
+	"strings"
 ) //line qs.y:4
 // Need this even though we run goimports because they have __yyfmt__ "fmt"
 // auto generated.
@@ -85,56 +86,56 @@ var yyExca = [...]int{
 
 const yyPrivate = 57344
 
-const yyLast = 51
+const yyLast = 56
 
 var yyAct = [...]int{
 
-	7, 26, 29, 3, 39, 9, 30, 44, 37, 27,
-	28, 38, 14, 5, 2, 23, 21, 20, 15, 16,
-	22, 24, 25, 33, 43, 6, 17, 47, 40, 36,
-	15, 16, 35, 45, 13, 12, 31, 11, 8, 4,
-	42, 41, 15, 32, 19, 46, 18, 13, 34, 1,
-	10,
+	7, 26, 30, 3, 30, 27, 31, 45, 31, 28,
+	29, 28, 29, 40, 9, 23, 38, 14, 5, 44,
+	39, 2, 6, 34, 21, 48, 20, 46, 22, 41,
+	24, 25, 15, 16, 37, 8, 12, 36, 15, 16,
+	17, 43, 42, 4, 32, 13, 47, 18, 11, 19,
+	33, 15, 13, 35, 1, 10,
 }
 var yyPact = [...]int{
 
-	-3, -1000, 30, -4, 11, 29, 27, -5, -1000, 13,
-	40, 27, -1000, 6, 29, 27, 27, -1000, -1000, -6,
-	25, -6, 20, -9, -1000, 37, -1000, -1000, -1000, -1000,
-	-1000, -1000, -7, -1000, 15, -1000, -1000, 30, -6, 10,
-	-1000, -10, -1000, 21, 29, 14, -1000, -1000,
+	4, -1000, 34, 1, 8, 26, 38, 0, -1000, 27,
+	45, 38, -1000, 14, 26, 38, 38, -1000, -1000, -4,
+	33, -6, 25, -1, -1000, 46, -1000, -1000, -1000, -1000,
+	-1000, -1000, -1000, 2, -1000, 16, -1000, -1000, 34, -6,
+	5, -1000, -10, -1000, 15, 26, 12, -1000, -1000,
 }
 var yyPgo = [...]int{
 
-	0, 0, 50, 49, 48, 5, 1, 43, 3, 35,
+	0, 0, 55, 54, 53, 14, 1, 50, 3, 36,
 }
 var yyR1 = [...]int{
 
 	0, 6, 6, 6, 6, 7, 7, 7, 4, 4,
 	9, 9, 9, 9, 2, 2, 5, 5, 5, 5,
-	1, 8, 8, 3, 3, 3, 3, 3,
+	5, 1, 8, 8, 3, 3, 3, 3, 3,
 }
 var yyR2 = [...]int{
 
 	0, 1, 1, 1, 1, 0, 1, 3, 1, 1,
 	4, 7, 4, 1, 1, 2, 3, 3, 3, 3,
-	1, 1, 4, 2, 4, 6, 8, 10,
+	3, 1, 1, 4, 2, 4, 6, 8, 10,
 }
 var yyChk = [...]int{
 
 	-1000, -3, 17, -8, 9, 17, 14, -1, 9, -5,
 	-2, 10, -9, 7, 17, 5, 6, 13, -9, 4,
-	-5, 10, 14, -1, -5, -5, -6, 15, 16, 8,
-	12, 11, -7, -6, -4, 12, 9, 17, 18, 11,
-	13, -8, -6, 14, 17, 12, -1, 13,
+	-5, 10, 14, -1, -5, -5, -6, 9, 15, 16,
+	8, 12, 11, -7, -6, -4, 12, 9, 17, 18,
+	11, 13, -8, -6, 14, 17, 12, -1, 13,
 }
 var yyDef = [...]int{
 
-	0, -2, 0, 23, 21, 0, 0, 24, 20, 0,
-	0, 0, 14, 13, 0, 0, 0, 22, 15, 0,
-	0, 5, 0, 25, 17, 18, 16, 1, 2, 3,
-	4, 19, 0, 6, 0, 8, 9, 0, 0, 10,
-	12, 26, 7, 0, 0, 0, 27, 11,
+	0, -2, 0, 24, 22, 0, 0, 25, 21, 0,
+	0, 0, 14, 13, 0, 0, 0, 23, 15, 0,
+	0, 5, 0, 26, 18, 19, 16, 17, 1, 2,
+	3, 4, 20, 0, 6, 0, 8, 9, 0, 0,
+	10, 12, 27, 7, 0, 0, 0, 28, 11,
 }
 var yyTok1 = [...]int{
 
@@ -637,19 +638,46 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 		//line qs.y:168
 		{
-			yyDollar[1].condChain.Raw += " && " + yyDollar[3].condChain.String()
-			yyDollar[1].condChain.PushAnd(yyDollar[3].condChain)
+			if yyDollar[3].s == "true" || yyDollar[3].s == "false" {
+				val := yyDollar[3].s == "true"
+				yyVAL.condChain = &QSCondition{
+					Raw: fmt.Sprintf("%s %s %s", yyDollar[1].sel.String(), yyDollar[2].op.String(), yyDollar[3].s),
+					Cmp: &QSComparer{
+						Fields: yyDollar[1].sel,
+						Op:     yyDollar[2].op,
+						To:     val,
+					},
+				}
+			} else if strings.HasPrefix(yyDollar[3].s, "Bool") {
+				yyVAL.condChain = &QSCondition{
+					Raw: fmt.Sprintf("%s %s %s", yyDollar[1].sel.String(), yyDollar[2].op.String(), yyDollar[3].s),
+					Cmp: &QSComparer{
+						Fields: yyDollar[1].sel,
+						Op:     yyDollar[2].op,
+						To:     ubFromString(yyDollar[3].s),
+					},
+				}
+			} else {
+				yylex.Error(fmt.Sprintf("unexpected %v", yyDollar[3].s))
+			}
 		}
 	case 18:
 		yyDollar = yyS[yypt-3 : yypt+1]
-		//line qs.y:172
+		//line qs.y:192
+		{
+			yyDollar[1].condChain.Raw += " && " + yyDollar[3].condChain.String()
+			yyDollar[1].condChain.PushAnd(yyDollar[3].condChain)
+		}
+	case 19:
+		yyDollar = yyS[yypt-3 : yypt+1]
+		//line qs.y:196
 		{
 			yyDollar[1].condChain.Raw += " || " + yyDollar[3].condChain.String()
 			yyDollar[1].condChain.PushOr(yyDollar[3].condChain)
 		}
-	case 19:
+	case 20:
 		yyDollar = yyS[yypt-3 : yypt+1]
-		//line qs.y:176
+		//line qs.y:200
 		{
 			c := new(QSCondition)
 			*c = *yyDollar[2].condChain
@@ -660,49 +688,49 @@ yydefault:
 				Or:  nil,
 			}
 		}
-	case 20:
+	case 21:
 		yyDollar = yyS[yypt-1 : yypt+1]
-		//line qs.y:188
+		//line qs.y:212
 		{
 			yyVAL.s = yyDollar[1].s
 		}
-	case 21:
+	case 22:
 		yyDollar = yyS[yypt-1 : yypt+1]
-		//line qs.y:193
+		//line qs.y:217
 		{
 			yyVAL.qss = QSSelector{
 				Resource: yyDollar[1].s,
 			}
 		}
-	case 22:
+	case 23:
 		yyDollar = yyS[yypt-4 : yypt+1]
-		//line qs.y:198
+		//line qs.y:222
 		{
 			yyVAL.qss = QSSelector{
 				Resource:  yyDollar[1].s,
 				Condition: yyDollar[3].condChain,
 			}
 		}
-	case 23:
+	case 24:
 		yyDollar = yyS[yypt-2 : yypt+1]
-		//line qs.y:208
+		//line qs.y:232
 		{
 			yylex.(*qsLexer).result = QueryString{
 				Sel: yyDollar[2].qss,
 			}
 		}
-	case 24:
+	case 25:
 		yyDollar = yyS[yypt-4 : yypt+1]
-		//line qs.y:214
+		//line qs.y:238
 		{
 			yylex.(*qsLexer).result = QueryString{
 				Sel:           yyDollar[2].qss,
 				ResourceGroup: yyDollar[4].s,
 			}
 		}
-	case 25:
+	case 26:
 		yyDollar = yyS[yypt-6 : yypt+1]
-		//line qs.y:221
+		//line qs.y:245
 		{
 			yylex.(*qsLexer).result = QueryString{
 				Sel:           yyDollar[2].qss,
@@ -710,9 +738,9 @@ yydefault:
 				Name:          yyDollar[6].s,
 			}
 		}
-	case 26:
+	case 27:
 		yyDollar = yyS[yypt-8 : yypt+1]
-		//line qs.y:229
+		//line qs.y:253
 		{
 			yylex.(*qsLexer).result = QueryString{
 				Sel:           yyDollar[2].qss,
@@ -723,9 +751,9 @@ yydefault:
 				},
 			}
 		}
-	case 27:
+	case 28:
 		yyDollar = yyS[yypt-10 : yypt+1]
-		//line qs.y:240
+		//line qs.y:264
 		{
 			yylex.(*qsLexer).result = QueryString{
 				Sel:           yyDollar[2].qss,

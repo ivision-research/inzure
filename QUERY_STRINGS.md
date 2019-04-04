@@ -40,7 +40,7 @@ Query strings are much more than just identifiers though. They also support cond
 Where `FIELD` can be a chain of fields identifiers that would look very similar to the Go code for selecting things. For example,
 
 ```
-/SQLServers[.FQDN LIKE ".*public.*"]
+/SQLServers[.FQDN ~ ".*public.*"]
 ```
 
 adds a conditional onto the selection of all SQLServers. Fields can also select slices and have a special syntax for that:
@@ -63,7 +63,7 @@ You can also call methods in a condition:
 methods must be the last selector and you can choose which return value to check with a `[X]` after the method. By default, the 0th is checked. Errors in the method calls are checked and propagated if any are returned.
 
 
-Available operators are the typical comparison operators as well as `LIKE` and `!LIKE`.
+Available operators are the typical comparison operators as well as `~` and `!~`, which compare regular expressions to strings.
 
 ### Writing Conditions
 

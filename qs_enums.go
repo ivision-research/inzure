@@ -34,9 +34,9 @@ func (op QSOpT) String() string {
 	case QSOpLte:
 		return "<="
 	case QSOpLike:
-		return "LIKE"
+		return "~"
 	case QSOpNotLike:
-		return "!LIKE"
+		return "!~"
 	default:
 		return fmt.Sprintf("Unknown Val(%d)", op)
 	}

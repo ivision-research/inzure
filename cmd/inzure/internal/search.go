@@ -34,6 +34,10 @@ func CmdSearch(c *cli.Context) {
 
 	v, err := sub.ReflectFromQueryString(SearchIQS)
 	if err != nil {
+		le, is := err.(inzure.LexError)
+		if is {
+			exitError(1, le.ErrorWithHint())
+		}
 		exitError(1, err.Error())
 	}
 	var out io.Writer

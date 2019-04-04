@@ -165,6 +165,30 @@ Condition:
             },
         }
     }
+    | Selector OP CHARS {
+        if $3 == "true" || $3 == "false" {
+            val := $3 == "true"
+            $$ = &QSCondition{
+                Raw: fmt.Sprintf("%s %s %s", $1.String(), $2.String(), $3),
+                Cmp: &QSComparer{
+                    Fields: $1,
+                    Op: $2,
+                    To: val,
+                },
+            }
+        } else if strings.HasPrefix($3, "Bool") {
+            $$ = &QSCondition{
+                Raw: fmt.Sprintf("%s %s %s", $1.String(), $2.String(), $3),
+                Cmp: &QSComparer{
+                    Fields: $1,
+                    Op: $2,
+                    To: ubFromString($3),
+                },
+            }
+        } else {
+            yylex.Error(fmt.Sprintf("unexpected %v", $3))
+        }
+    }
     | Condition AND Condition {
         $1.Raw += " && " + $3.String()
         $1.PushAnd($3)

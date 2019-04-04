@@ -1,13 +1,13 @@
-.PHONY: all clean test
+.PHONY: all lex clean test
 
+LEX=qs_lexer.go
 LEX_OUT=../qs_lexer.go
 PARSE_OUT=../qs_parser.go
 
-all: $(LEX_OUT) $(PARSE_OUT)
+all: lex $(PARSE_OUT)
 
-$(LEX_OUT): qs.l
-	golex -o $@ $<
-	goimports -srcdir .. -w $@
+lex:
+	cp $(LEX) $(LEX_OUT)
 
 $(PARSE_OUT): qs.y
 	goyacc -o $@ $<

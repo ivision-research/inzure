@@ -213,7 +213,7 @@ func qsPostLexCmpTest(t *testing.T, s string, expected bool) {
 	l := newLexer(s)
 	ret := yyParse(l)
 	if ret != 0 {
-		t.Fatalf("errors parsing: %v", l.errs[0])
+		t.Fatalf("errors parsing: %v", l.err.(LexError).ErrorWithHint())
 	}
 	res := l.result
 	passes, err := res.Sel.Condition.Compare(reflect.ValueOf(qsCompareTestVar))
@@ -229,15 +229,15 @@ func TestQSCompareSimple(t *testing.T) {
 	// The /Z is meaningless in this test setup, but it needs to be there to
 	// avoid a parsing error
 	tMap := map[string]bool{
-		"/Z[.A.Bs[0].I == 0]":                       true,
-		"/Z[.A.Bs[0].I >= 1]":                       false,
-		"/Z[.A.Bs[ALL].I <= 0]":                     true,
-		"/Z[.A.Len() > 1]":                          true,
-		"/Z[.A.Len() <= 2]":                         true,
-		"/Z[.A.Len() < 0]":                          false,
-		"/Z[.B.UB.True() == true]":                  true,
-		"/Z[.B.UB.True() != false]":                 true,
-		"/Z[.A.Bs[ALL].CS[ANY].Val LIKE \".*Val\"]": true,
+		"/Z[.A.Bs[0].I == 0]":                    true,
+		"/Z[.A.Bs[0].I >= 1]":                    false,
+		"/Z[.A.Bs[ALL].I <= 0]":                  true,
+		"/Z[.A.Len() > 1]":                       true,
+		"/Z[.A.Len() <= 2]":                      true,
+		"/Z[.A.Len() < 0]":                       false,
+		"/Z[.B.UB.True() == true]":               true,
+		"/Z[.B.UB.True() != false]":              true,
+		"/Z[.A.Bs[ALL].CS[ANY].Val ~ \".*Val\"]": true,
 		//"/Z[.A.Bs[ALL].SS[ANY] ==\"Wow\"]":          true,
 	}
 	for s, ex := range tMap {

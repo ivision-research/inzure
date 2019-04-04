@@ -57,7 +57,7 @@ func TestSimpleBaseQS(t *testing.T) {
 
 func TestNameLikeQS(t *testing.T) {
 	into := make([]*SQLServer, 0)
-	s := "/SQLServers[.Meta.Name LIKE \"^inzure-.*\"]"
+	s := "/SQLServers[.Meta.Name ~ \"^inzure-.*\"]"
 	err := testSub.FromQueryString(s, &into)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func iqsTestSlice(v reflect.Value, f func(interface{})) {
 }
 
 func TestSubresourcesQS(t *testing.T) {
-	qs := "/StorageAccounts/*/*/Containers[.Name !LIKE \"^inzure\"]"
+	qs := "/StorageAccounts/*/*/Containers[.Name !~ \"^inzure\"]"
 	v, err := testGetQS(t, qs)
 	if err != nil {
 		t.Fatalf("%s failed but shouldn't have: %v", qs, err)
@@ -156,4 +156,18 @@ func TestQSMethodCall(t *testing.T) {
 	}
 
 	qs = "/CosmosDBs[.Firewall.AllowsIPString(\"0.0.0.0\")]"
+}
+
+func TestQSValidOdd(t *testing.T) {
+	okQSs := []string{
+		"/VirtualMachines/this.is_ok.rg",  // Allow dots and underscores in rg
+		"/VirtualMachines/rg/allows_this", // Allow underscores in name
+	}
+	for _, qs := range okQSs {
+		var p QueryString
+		err := p.Parse(qs)
+		if err != nil {
+			t.Fatalf("qs %s failed but should have passed:\n%v", qs, err)
+		}
+	}
 }
