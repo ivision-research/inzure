@@ -1,1 +1,1 @@
-This directory contains the golex/goyacc files for generating the qs_lexer.go and qs_parser.go files. These files are alreay generated and in this repository in the directory above this one. 
+This directory contains the goyacc file for generating the and qs_parser.go file. These files are alreay generated and in this repository in the directory above this one. It also contains the accompanying lexer in qs_lexer.go
