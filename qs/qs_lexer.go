@@ -156,7 +156,9 @@ loop:
 			if unicode.IsSpace(r) {
 				break loop
 			}
-			l.Error(fmt.Sprintf("%c cannot be in a number", r))
+			l.push(r)
+			// We were wrong, it wasn't a number.
+			return l.chars(lval)
 		}
 	}
 	if l.err != nil {
