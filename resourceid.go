@@ -251,6 +251,33 @@ func (r *ResourceID) FromID(id string) {
 	r.fromID(id)
 }
 
+// ExtractValueForTag parses the RawID for something like `.../tag/value...`
+// and returns value. Matches case insensitively if case insensitive is true.
+// Returns the empty string if the tag is not found.
+func (r *ResourceID) ExtractValueForTag(tag string, caseInsensitive bool) string {
+	var toMatch string
+	if caseInsensitive {
+		toMatch = strings.ToLower(tag)
+	} else {
+		toMatch = tag
+	}
+	scan := bufio.NewScanner(strings.NewReader(r.RawID))
+	scan.Split(resourceStringScanFun)
+	for scan.Scan() {
+		txt := scan.Text()
+		if caseInsensitive {
+			txt = strings.ToLower(txt)
+		}
+		if txt == toMatch {
+			if !scan.Scan() {
+				return ""
+			}
+			return scan.Text()
+		}
+	}
+	return ""
+}
+
 func getEndTag(t AzureResourceTag, provider string) AzureResourceTag {
 	// For now only DataLakeT should be swapped depending on the provider
 	if t == DataLakeT {
