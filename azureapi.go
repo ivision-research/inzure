@@ -1117,7 +1117,8 @@ func (impl *azureImpl) GetContainers(ctx context.Context, sa *StorageAccount, ec
 		id := sa.Meta
 		client, err := getStorageClient(&id, sa.key, impl.env)
 		if err != nil {
-			sendErr(ctx, err, ec)
+			e := simpleActionError(sa.Meta, "GetClient", err)
+			sendErr(ctx, e, ec)
 			return
 		}
 		bsc := client.GetBlobService()
@@ -1200,20 +1201,11 @@ func NewAzureAPI() (AzureAPI, error) {
 		return nil, errors.New("Need to set AZURE_TENANT_ID")
 	}
 
-	envName := os.Getenv("AZURE_ENVIRONMENT")
-	if envName != "" {
-		if err != nil {
-			return nil, err
-		}
-		var env azure.Environment
-		env, err = azure.EnvironmentFromName(envName)
-		if err != nil {
-			return nil, err
-		}
-		api.env = env
-	} else {
-		api.env = azure.PublicCloud
+	api.env, err = getAzureEnv()
+	if err != nil {
+		return nil, err
 	}
+
 	// Legit this whole thing is a mess.
 	if os.Getenv("AZURE_CLIENT_SECRET") != "" {
 		api.authorizer, err = auth.NewAuthorizerFromEnvironment()
@@ -1250,6 +1242,19 @@ func NewAzureAPI() (AzureAPI, error) {
 		}
 	}
 	return api, nil
+}
+
+func getAzureEnv() (env azure.Environment, err error) {
+	envName := os.Getenv("AZURE_ENVIRONMENT")
+	if envName != "" {
+		env, err = azure.EnvironmentFromName(envName)
+		if err != nil {
+			return
+		}
+	} else {
+		env = azure.PublicCloud
+	}
+	return
 }
 
 func debugDumpJSON(v interface{}) {
