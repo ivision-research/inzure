@@ -2,6 +2,7 @@ package inzure
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -109,6 +110,60 @@ type StorageAccount struct {
 	Containers   []Container
 
 	key string
+}
+
+// GetClient attempts to return a client for the account. It tries to ensure
+// that the client has a READ ONLY view of the account as well. The client
+// is only valid for 30 minutes.
+func (sa *StorageAccount) GetClient() (cl storage.Client, err error) {
+	var env azure.Environment
+	env, err = getAzureEnv()
+	if err != nil {
+		return
+	}
+	opts := storage.AccountSASTokenOptions{
+		Services: storage.Services{
+			Blob:  true,
+			Queue: true,
+			Table: true,
+			File:  true,
+		},
+		ResourceTypes: storage.ResourceTypes{
+			Service:   true,
+			Container: true,
+			Object:    true,
+		},
+		Permissions: storage.Permissions{
+			Read:    true,
+			List:    true,
+			Process: false,
+			Write:   false,
+			Delete:  false,
+			Add:     false,
+			Create:  false,
+			Update:  false,
+		},
+		UseHTTPS:   true,
+		Start:      time.Now(),
+		Expiry:     time.Now().Add(30 * time.Minute),
+		APIVersion: storage.DefaultAPIVersion,
+	}
+	var tcl storage.Client
+	tcl, err = storage.NewBasicClientOnSovereignCloud(
+		sa.Meta.Name, sa.key, env,
+	)
+	if err != nil {
+		return
+	}
+	var vals url.Values
+	vals, err = tcl.GetAccountSASToken(opts)
+	if err != nil {
+		return
+	}
+	cl = storage.NewAccountSASClient(
+		sa.Meta.Name, vals, env,
+	)
+	return
 }
 
 type genericAccessPolicy struct {

@@ -131,6 +131,7 @@ func NewSubscriptionWithAlias(id, alias string) Subscription {
 		classicKey:             nil,
 		AuditDate:              time.Now(),
 		quiet:                  false,
+		listKeys:               true,
 		Recommendations:        make([]*Recommendation, 0),
 		ResourceGroups:         make(map[string]*ResourceGroup),
 		searchTargets:          make(map[SearchTarget]struct{}),
