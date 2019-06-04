@@ -68,6 +68,8 @@ type AzureAPI interface {
 	// NetworkInterface structs only contain the ResourceID and need to be
 	// fully populated via results from other API calls.
 	GetVirtualMachines(ctx context.Context, sub string, ec chan<- error) <-chan *VirtualMachine
+	// GetLoadBalancers gets all LoadBalancers in a given resource group. If rg
+	// is an empty string, it gets all of them regardless of resource group.
 	GetLoadBalancers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *LoadBalancer
 	GetDataLakeStores(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *DataLakeStore
 	GetDataLakeAnalytics(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *DataLakeAnalytics
@@ -685,19 +687,94 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 		cl := network.NewLoadBalancersClient(sub)
 		cl.Authorizer = impl.authorizer
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListComplete(ctx, rg)
+		pipcl := network.NewPublicIPAddressesClientWithBaseURI(
+			impl.env.ResourceManagerEndpoint,
+			sub,
+		)
+		pipcl.Authorizer = impl.authorizer
+		ipccl := network.NewInterfaceIPConfigurationsClientWithBaseURI(
+			impl.env.ResourceManagerEndpoint,
+			sub,
+		)
+		ipccl.Authorizer = impl.authorizer
+		var it network.LoadBalancerListResultIterator
+		var err error
+		if rg == "" {
+			it, err = cl.ListAllComplete(ctx)
+		} else {
+			it, err = cl.ListComplete(ctx, rg)
+		}
 		if err != nil {
 			sendErr(ctx, genericError(sub, LoadBalancerT, "ListComplete", err), ec)
 			return
 		}
 		for it.NotDone() {
-			vm := NewEmptyLoadBalancer()
-			v := it.Value()
-			vm.FromAzure(&v)
+			lb := NewEmptyLoadBalancer()
+			azLb := it.Value()
+			lb.FromAzure(&azLb)
+			for i := range lb.FrontendIPs {
+				fipc := &lb.FrontendIPs[i]
+				// We may need to grab the public IP information here
+				if fipc.PublicIP.Meta.RawID != "" && fipc.PublicIP.IP == "" {
+					pip, err := pipcl.Get(
+						ctx, fipc.PublicIP.Meta.ResourceGroupName,
+						fipc.PublicIP.Meta.Name,
+						"",
+					)
+					if err != nil {
+						sendErr(
+							ctx, genericError(
+								sub, LoadBalancerT,
+								"GetPublicIP", err,
+							), ec,
+						)
+					} else {
+						fipc.PublicIP.FromAzure(&pip)
+					}
+				}
+			}
+			// We'll need to also look through the backend ipconfigurations
+			// since they are probably just references
+			for i := range lb.Backends {
+				for j := range lb.Backends[i].IPConfigurations {
+					ipc := &lb.Backends[i].IPConfigurations[j]
+					// If both IPs are empty and we have a raw id, it is just a
+					// reference
+					if ipc.Meta.RawID != "" && (ipc.PrivateIP == "" && ipc.PublicIP.IP == "") {
+						iface := ipc.Meta.ExtractValueForTag("networkinterfaces", true)
+						if iface != "" {
+							azIpc, err := ipccl.Get(
+								ctx, ipc.Meta.ResourceGroupName,
+								iface, ipc.Meta.Name,
+							)
+							if err != nil {
+								sendErr(
+									ctx, genericError(
+										sub, LoadBalancerT,
+										"GetIPForBackend", err,
+									), ec,
+								)
+								continue
+							}
+							ipc.FromAzure(&azIpc)
+						} else {
+							sendErr(
+								ctx, genericError(
+									sub, LoadBalancerT,
+									"GetIPForBackend",
+									fmt.Errorf(
+										"couldn't find interface for %s", ipc,
+									),
+								), ec,
+							)
+						}
+					}
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case c <- vm:
+			case c <- lb:
 			}
 			if err := it.Next(); err != nil {
 				sendErr(ctx, genericError(sub, LoadBalancerT, "GetNextResult", err), ec)

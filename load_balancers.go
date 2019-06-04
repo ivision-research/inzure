@@ -45,11 +45,34 @@ func (lb *LoadBalancer) FromAzure(az *network.LoadBalancer) {
 	}
 }
 
+func (lb *LoadBalancer) AddAzureFrontendIPConfiguration(azConf *network.FrontendIPConfiguration) {
+	var ipc LoadBalancerFrontendIPConfiguration
+	ipc.SetupEmpty()
+	ipc.FromAzure(azConf)
+	lb.FrontendIPs = append(lb.FrontendIPs, ipc)
+}
+
 type LoadBalancerFrontendIPConfiguration struct {
 	Meta      ResourceID
 	PublicIP  PublicIP
 	Subnet    ResourceID
 	PrivateIP AzureIPv4
+}
+
+func (lbf *LoadBalancerFrontendIPConfiguration) SetupEmpty() {
+	var rid ResourceID
+	rid.setupEmpty()
+	lbf.Meta = rid
+	lbf.Subnet = rid
+	lbf.PublicIP.setupEmpty()
+}
+
+func (lb *LoadBalancer) AddAzureBackendConfiguration(azConf *network.BackendAddressPool) {
+	lbb := LoadBalancerBackend{
+		IPConfigurations: make([]IPConfiguration, 0),
+	}
+	lbb.FromAzure(azConf)
+	lb.Backends = append(lb.Backends, lbb)
 }
 
 func (lbf *LoadBalancerFrontendIPConfiguration) UnmarshalJSON(b []byte) error {
