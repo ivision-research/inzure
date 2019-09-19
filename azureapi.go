@@ -883,6 +883,7 @@ func (impl *azureImpl) GetRedisServers(ctx context.Context, sub string, rg strin
 		fcl := redis.NewFirewallRulesClient(sub)
 		fcl.Authorizer = impl.authorizer
 		fcl.BaseURI = impl.env.ResourceManagerEndpoint
+
 		it, err := cl.ListByResourceGroupComplete(ctx, rg)
 		if err != nil {
 			sendErr(ctx, genericError(sub, RedisServerT, "ListByResourceGroupComplete", err), ec)
@@ -1075,6 +1076,9 @@ func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg st
 		st := storagemgmt.NewAccountsClient(sub)
 		st.Authorizer = impl.authorizer
 		st.BaseURI = impl.env.ResourceManagerEndpoint
+		//
+		// TODO: I believe this bug has been fixed.
+		//
 		// There is a bug in Azure in which the CustomDomain.useSubDomainName
 		// field is coming in as a string but is a bool in the struct itself.
 		// This works around that error by allowing us to try to recover later.
@@ -1154,8 +1158,8 @@ func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg st
 							[]byte("true"),
 						),
 					)
-					// Our solution didn't work so let's report it..
 					err := json.NewDecoder(buf).Decode(&l)
+					// Our solution didn't work so let's report it..
 					if err != nil {
 						sendErr(
 							ctx, genericError(

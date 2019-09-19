@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	// BadWhitelist will be returned for malformed whitelists
 	BadWhitelist = errors.New("whitelist was malformed")
 )
 

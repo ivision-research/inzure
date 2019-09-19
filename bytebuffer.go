@@ -1,5 +1,11 @@
 package inzure
 
+/**
+ * This type was made to temporarily deal with a deserialization bug in the
+ * Azure code. I don't know anywhere that it is used anymore and this could
+ * probably be removed some day.
+ */
+
 import (
 	"errors"
 	"fmt"
