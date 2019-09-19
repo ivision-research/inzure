@@ -27,6 +27,9 @@ func (c *CosmosDB) FromAzure(az *documentdb.DatabaseAccount) {
 		if len(sp) > 0 {
 			c.Firewall.IPs = make([]AzureIPv4, 0, len(sp))
 			for _, ip := range sp {
+				if ip == "" {
+					continue
+				}
 				c.Firewall.IPs = append(c.Firewall.IPs, NewAzureIPv4FromAzure(ip))
 			}
 		}
