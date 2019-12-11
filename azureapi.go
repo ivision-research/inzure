@@ -1287,29 +1287,17 @@ func NewAzureAPI() (AzureAPI, error) {
 		return nil, err
 	}
 
-	// Legit this whole thing is a mess.
+	// If this is defined in the environment, we're going to assume everything
+	// else needed to authenticate from the environment is.
 	if os.Getenv("AZURE_CLIENT_SECRET") != "" {
 		api.authorizer, err = auth.NewAuthorizerFromEnvironment()
 		if err != nil {
 			return nil, err
 		}
 	} else {
+		// Otherwise we're going to assume we have to use the device token
+		// auth flow.
 		clientID := os.Getenv("AZURE_CLIENT_ID")
-		/*
-			// TODO: I can't get those flow to work, but the device flow does
-			if os.Getenv("AZURE_USER_NAME") != "" && os.Getenv("AZURE_USER_PASSWORD") != "" {
-				uConf := auth.NewUsernamePasswordConfig(
-					os.Getenv("AZURE_USER_NAME"),
-					os.Getenv("AZURE_USER_PASSWORD"),
-					clientID,
-					os.Getenv("AZURE_TENANT_ID"),
-				)
-				uConf.AADEndpoint = api.env.ActiveDirectoryEndpoint
-				uConf.Resource = api.env.ResourceManagerEndpoint
-				api.authorizer, err = uConf.Authorizer()
-			}
-		*/
-
 		devConf := auth.NewDeviceFlowConfig(
 			clientID,
 			os.Getenv("AZURE_TENANT_ID"),
