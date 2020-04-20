@@ -385,16 +385,22 @@ func (ipr *WebAppIPRestriction) UnmarshalJSON(b []byte) error {
 }
 
 func (ipr *WebAppIPRestriction) FromAzure(az *web.IPSecurityRestriction) {
-	if az.IPAddress == nil {
-		return
-	}
-	ipr.IPRange = NewAzureIPv4FromAzure(*az.IPAddress)
 	a := az.Action
 	if a != nil {
 		ipr.Allow.FromBool(strings.ToLower(*a) == "allow")
 	}
 	valFromPtr(&ipr.Priority, az.Priority)
 	valFromPtr(&ipr.Name, az.Name)
+	if az.IPAddress == nil {
+		// Probably a VNet rule
+		if az.VnetSubnetResourceID == nil {
+			// Ok, fine, it isn't that either.
+			return
+		}
+		ipr.IPRange = NewAzureIPv4FromAzure(*az.VnetSubnetResourceID)
+	} else {
+		ipr.IPRange = NewAzureIPv4FromAzure(*az.IPAddress)
+	}
 }
 
 type AppServiceEnvironment struct {
@@ -448,6 +454,10 @@ func (w *WebApp) fillConfigInfo(conf *web.SiteConfig) {
 		for _, e := range *fw {
 			var ipr WebAppIPRestriction
 			ipr.FromAzure(&e)
+			// Ensure that there isn't a null
+			if ipr.IPRange == nil {
+				ipr.SetupEmpty()
+			}
 			w.Firewall = append(w.Firewall, ipr)
 		}
 		sort.Sort(w.Firewall)

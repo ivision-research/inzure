@@ -355,3 +355,8 @@ func (r *ResourceID) QueryString() (string, error) {
 	}
 	return fmt.Sprintf("/%s/%s/%s", v, r.ResourceGroupName, r.Name), nil
 }
+
+// TODO This could be better.
+func StringLooksLikeResourceID(s string) bool {
+	return strings.HasPrefix(s, "/subscriptions/")
+}

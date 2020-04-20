@@ -24,6 +24,13 @@ type FirewallRule struct {
 	AllowsAllAzure UnknownBool
 }
 
+// SetupEmpty initializes a FirewallRule to not contain nulls.
+func (f FirewallRule) SetupEmpty() {
+	f.AllowsAllAzure = BoolUnknown
+	f.IPRange = NewEmptyAzureIPv4()
+	f.Name = ""
+}
+
 type FirewallRules []FirewallRule
 
 func (f FirewallRules) AllowsIP(ip AzureIPv4) (UnknownBool, []PacketRoute, error) {

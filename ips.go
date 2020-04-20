@@ -54,11 +54,13 @@ const (
 	AzureAbstractIPAzureLoadBalancer
 	AzureAbstractIPInternet
 	AzureAbstractIPNormal
+	AzureAbstractIPResourceID
 )
 
 const (
-	ipMin = uint32(0)
-	ipMax = ^uint32(0)
+	ipMin              = uint32(0)
+	ipMax              = ^uint32(0)
+	maxSliceAllocation = uint64(512)
 )
 
 // AzureIPv4 manages the complex type that is a security rule IP. Azure
@@ -163,8 +165,19 @@ type ipv4Impl struct {
 	raw       string
 	abstract  AzureAbstractIPType
 	isSpecial bool
+
+	// 3 actual specifications
+
+	// Just a simple single IP address
 	rangeOrSingle
+
+	// Azure can sometimes represent an IP address as a comma separated list
+	// if IP addresses.
 	multiple []rangeOrSingle
+
+	// Azure sometimes allows you to specify a given resource to specify an
+	// ip range. For example, a a virtual network can be given.
+	resource *ResourceID
 }
 
 func (c *rangeOrSingle) size() uint64 {
@@ -821,9 +834,12 @@ func (s sortable) Less(i, j int) bool {
 	return first.begin.val < second.begin.val
 }
 
-// TODO: Actually check that they're IPs
 func isRange(s string) bool {
-	return strings.Contains(s, "-")
+	split := strings.Split(s, "-")
+	if len(split) != 2 {
+		return false
+	}
+	return isSingleIPv4(split[0]) && isSingleIPv4(split[1])
 }
 
 func (s *ipv4Impl) fromRange(st string) {
@@ -907,7 +923,14 @@ func (s *ipv4Impl) FromAzure(az string) {
 			// right anymore" which might be an issue with maintainability..
 			s.FromAzure("168.63.129.16,169.254.169.254")
 		default:
-			s.abstract = AzureAbstractIPUnknown
+			// Is the "IP" actually a resource string?
+			if StringLooksLikeResourceID(az) {
+				s.abstract = AzureAbstractIPResourceID
+				s.resource = new(ResourceID)
+				s.resource.FromID(az)
+			} else {
+				s.abstract = AzureAbstractIPUnknown
+			}
 		}
 	}
 }
@@ -918,6 +941,13 @@ func (s *ipv4Impl) Equals(o *ipv4Impl) bool {
 	}
 	if s.isSpecial {
 		if o.isSpecial {
+			if s.resource != nil {
+				if o.resource != nil {
+					return s.resource.Equals(o.resource)
+				} else {
+					return false
+				}
+			}
 			return s.raw == o.raw
 		} else {
 			return false
@@ -970,10 +1000,6 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 		return BoolFalse
 	}
 
-	if a.IsSpecial() || b.IsSpecial() {
-		return BoolUnknown
-	}
-
 	if a.Size() != b.Size() {
 		return BoolFalse
 	}
@@ -994,6 +1020,14 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 		}
 		return unknownFromBool(reflect.DeepEqual(av, bv))
 	}
+
+	// Special can really only be handled by the underlying type, so if we
+	// weren't able to figure anything out in the reflection route, we're
+	// gonna bail here.
+	if a.IsSpecial() || b.IsSpecial() {
+		return BoolUnknown
+	}
+
 	// Otherwise the process can get complicated, but maybe they're both
 	// continuous ranges which would be easy
 	aCont, aStart, aEnd := a.ContinuousRangeUint32()
@@ -1011,9 +1045,8 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 	// Otherwise we have to compare each IP. If the range is too big we don't
 	// want to allocate a giant slice, but we don't want to be spawning
 	// goroutines for small ranges either.
-	maxForSlice := uint64(512)
 	// Sizes are already equal
-	if a.Size() < maxForSlice {
+	if a.Size() < maxSliceAllocation {
 		aAll := uint32Sortable(a.AllIPsUint32())
 		bAll := uint32Sortable(b.AllIPsUint32())
 		sort.Sort(aAll)
@@ -1030,7 +1063,7 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 	// range of IPs
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	for aE := range a.AllIPsUint32Gen(ctx, int(maxForSlice)) {
+	for aE := range a.AllIPsUint32Gen(ctx, int(maxSliceAllocation)) {
 		// We have to do this otherwise we're going to have a ton of
 		// goroutines that just hang for a long time.
 		bCtx, bCancel := context.WithCancel(context.Background())
@@ -1064,13 +1097,12 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 		return BoolTrue
 	}
 
-	// I think this check is merited here. Special types contain themselves
-	// trivially. IE, of course Internet contains Internet. However we can't
-	// always tell if a special type includes a non special IP without more
-	// context.
+	// Checking specials here makes sense, but we're going to have to be
+	// careful since some specials cannot be considered to trivially contain
+	// themselves.
 	if in.IsSpecial() {
 		if find.IsSpecial() {
-			return UnknownFromBool(in.GetType() == find.GetType())
+			return specialsTriviallyContained(in.GetType(), find.GetType())
 		}
 		// One case that is obvious here is if find is *, we know * isn't
 		// contained in any Specials.
@@ -1117,8 +1149,7 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 		}
 		return in.ContainsRangeUint32(findBegin, findEnd)
 	}
-	// Arbitrary boundary, we'll be OK with allocating 50 uint32s I guess
-	if find.Size() < 50 {
+	if find.Size() < maxSliceAllocation {
 		ips := find.AllIPsUint32()
 		for _, ip := range ips {
 			contains := in.ContainsUint32(ip)
@@ -1168,4 +1199,11 @@ func IPInList(chk AzureIPv4, list []AzureIPv4) UnknownBool {
 		return BoolUnknown
 	}
 	return BoolFalse
+}
+
+func specialsTriviallyContained(in AzureAbstractIPType, find AzureAbstractIPType) UnknownBool {
+	if in == AzureAbstractIPResourceID || find == AzureAbstractIPResourceID {
+		return BoolUnknown
+	}
+	return unknownFromBool(in == find)
 }

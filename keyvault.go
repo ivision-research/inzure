@@ -23,7 +23,7 @@ func NewEmptyKeyVault() *KeyVault {
 		Meta:           id,
 		AccessPolicies: make([]KeyVaultAccessPolicy, 0),
 		Firewall: KeyVaultFirewall{
-			IPRules:   make([]AzureIPv4, 0),
+			IPRules:   make(IPCollection, 0),
 			VNetRules: make([]ResourceID, 0),
 		},
 	}
@@ -53,7 +53,7 @@ func (kv *KeyVault) FromAzure(az *keyvault.Vault) {
 }
 
 type KeyVaultFirewall struct {
-	IPRules      []AzureIPv4
+	IPRules      IPCollection
 	DefaultAllow UnknownBool
 	VNetRules    []ResourceID
 }
