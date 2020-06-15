@@ -176,10 +176,16 @@ func (fw *FirewallRule) FromAzureRedis(az *redis.FirewallRule) {
 
 func (fw *FirewallRule) FromAzurePostgres(az *postgresql.FirewallRule) {
 	valFromPtr(&fw.Name, az.Name)
-	fw.AllowsAllAzure = BoolNotApplicable
 	props := az.FirewallRuleProperties
 	if props.StartIPAddress != nil && props.EndIPAddress != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIPAddress, *props.EndIPAddress)
+		is, start, end := fw.IPRange.ContinuousRangeUint32()
+		if is.True() && start == 0 && end == 0 {
+			fw.AllowsAllAzure = BoolTrue
+		} else {
+			fw.AllowsAllAzure = BoolFalse
+		}
+
 	}
 
 }
