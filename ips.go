@@ -54,6 +54,7 @@ const (
 	AzureAbstractIPAzureLoadBalancer
 	AzureAbstractIPInternet
 	AzureAbstractIPNormal
+	AzureAbstractIPEmpty
 )
 
 const (
@@ -84,7 +85,7 @@ type AzureIPv4 interface {
 	// when IsSpecial returns true
 	GetType() AzureAbstractIPType
 	// AsUint32 will return the single IP as a uint32. This function is
-	// undefined if size is > 1.
+	// undefined if size != 1.
 	AsUint32() uint32
 	// FromAzure loads an Azure IP into the instance of this interface type.
 	// There are no guarantees about continuity of state before and after this
@@ -204,6 +205,9 @@ func (s *ipv4Impl) AsUint32() uint32 {
 }
 
 func (s *ipv4Impl) ContainsUint32(v uint32) UnknownBool {
+	if s.abstract == AzureAbstractIPEmpty {
+		return BoolFalse
+	}
 	if s.isSpecial {
 		return BoolUnknown
 	}
@@ -219,6 +223,9 @@ func (s *ipv4Impl) ContainsUint32(v uint32) UnknownBool {
 }
 
 func (s *ipv4Impl) ContainsRangeUint32(begin uint32, end uint32) UnknownBool {
+	if s.abstract == AzureAbstractIPEmpty {
+		return BoolFalse
+	}
 	if s.isSpecial {
 		return BoolUnknown
 	}
@@ -234,6 +241,9 @@ func (s *ipv4Impl) ContainsRangeUint32(begin uint32, end uint32) UnknownBool {
 }
 
 func (s *ipv4Impl) ContainsRange(begin string, end string) UnknownBool {
+	if s.abstract == AzureAbstractIPEmpty {
+		return BoolFalse
+	}
 	if s.isSpecial {
 		return BoolUnknown
 	}
@@ -247,6 +257,9 @@ func (s *ipv4Impl) ContinuousRange() (UnknownBool, string, string) {
 	if s.isSpecial {
 		return BoolUnknown, "", ""
 	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return BoolFalse, "", ""
+	}
 	is, start, end := s.ContinuousRangeUint32()
 	if is == BoolTrue {
 		return BoolTrue, ipv4ToString(start), ipv4ToString(end)
@@ -257,6 +270,9 @@ func (s *ipv4Impl) ContinuousRange() (UnknownBool, string, string) {
 func (s *ipv4Impl) ContinuousRangeUint32() (UnknownBool, uint32, uint32) {
 	if s.isSpecial {
 		return BoolUnknown, 0, 0
+	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return BoolFalse, 0, 0
 	}
 	if s.single.set {
 		return BoolTrue, s.single.val, s.single.val
@@ -433,6 +449,9 @@ func (s *ipv4Impl) MarshalJSON() ([]byte, error) {
 	if s.isSpecial {
 		return []byte(fmt.Sprintf("\"%s\"", s.raw)), nil
 	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return []byte("\"\""), nil
+	}
 	var mString string
 	if s.single.set || s.multiple != nil {
 		mString = s.String()
@@ -477,6 +496,9 @@ func (s *ipv4Impl) AllIPs() []string {
 	if s.isSpecial {
 		return []string{s.raw}
 	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return []string{}
+	}
 	return mapToStrings(ipv4ToString, s.AllIPsUint32())
 }
 
@@ -489,7 +511,7 @@ func (s *ipv4Impl) AllIPsGen(ctx context.Context, buf int) <-chan string {
 	}
 	go func() {
 		defer close(c)
-		if s.isSpecial {
+		if s.isSpecial || s.abstract == AzureAbstractIPEmpty {
 			select {
 			case <-ctx.Done():
 				return
@@ -547,6 +569,10 @@ func (s *ipv4Impl) AllIPsUint32Gen(ctx context.Context, buf int) <-chan uint32 {
 	}
 	go func() {
 		defer close(c)
+		// just close the channel
+		if s.abstract == AzureAbstractIPEmpty {
+			return
+		}
 		if s.multiple != nil {
 			for _, mip := range s.multiple {
 				if mip.single.set {
@@ -590,6 +616,9 @@ func (s *ipv4Impl) AllIPsUint32() []uint32 {
 	if s.isSpecial {
 		return nil
 	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return []uint32{}
+	}
 	if s.multiple != nil {
 		u := make([]uint32, 0, len(s.multiple))
 		for _, mip := range s.multiple {
@@ -600,15 +629,11 @@ func (s *ipv4Impl) AllIPsUint32() []uint32 {
 	return s.allIPsUint32()
 }
 
-// NewEmptyAzureIPv4 returns an empty AzureIPv4
-func NewEmptyAzureIPv4() AzureIPv4 {
-	return new(ipv4Impl)
-}
-
 // NewAzureIPv4FromRange creates a new AzureIPv4 from a range of IPs
 func NewAzureIPv4FromRange(begin string, end string) AzureIPv4 {
 	r := new(ipv4Impl)
 	if !(isSingleIPv4(begin) && isSingleIPv4(end)) {
+		r.unset()
 		return r
 	}
 	r.begin.setTo(ipv4FromString(begin))
@@ -619,6 +644,12 @@ func NewAzureIPv4FromRange(begin string, end string) AzureIPv4 {
 		r.begin.unset()
 	}
 	return r
+}
+
+func NewEmptyAzureIPv4() AzureIPv4 {
+	ip := new(ipv4Impl)
+	ip.unset()
+	return ip
 }
 
 func NewCheckedAzureIPv4FromAzure(s string) (AzureIPv4, error) {
@@ -645,10 +676,10 @@ func implFromString(s string) *ipv4Impl {
 func ipv4ToString(v uint32) string {
 	return fmt.Sprintf(
 		"%d.%d.%d.%d",
-		(v&(0xFF000000))>>24,
-		(v&(0x00FF0000))>>16,
-		(v&(0x0000FF00))>>8,
-		v&(0x000000FF),
+		(v&0xFF000000)>>24,
+		(v&0x00FF0000)>>16,
+		(v&0x0000FF00)>>8,
+		v&0x000000FF,
 	)
 }
 
@@ -668,7 +699,7 @@ func (c *rangeOrSingle) String() string {
 }
 
 func (s *ipv4Impl) String() string {
-	if s.isSpecial {
+	if s.isSpecial || s.abstract == AzureAbstractIPEmpty {
 		return s.raw
 	}
 	if s.multiple != nil {
@@ -682,6 +713,10 @@ func (s *ipv4Impl) String() string {
 }
 
 func (s *ipv4Impl) Contains(o string) UnknownBool {
+	// Empty doesn't contain anything and nothing contains empty
+	if s.abstract == AzureAbstractIPEmpty || len(o) == 0 {
+		return BoolFalse
+	}
 	if s.isSpecial {
 		return BoolUnknown
 	}
@@ -705,6 +740,7 @@ func (s *ipv4Impl) unset() {
 	s.rangeOrSingle.unset()
 	s.multiple = nil
 	s.isSpecial = false
+	s.abstract = AzureAbstractIPEmpty
 	s.raw = ""
 }
 
@@ -880,14 +916,14 @@ func (s *ipv4Impl) IsSpecial() bool {
 }
 
 func (s *ipv4Impl) GetType() AzureAbstractIPType {
-	if !s.IsSpecial() {
-		return AzureAbstractIPNormal
-	}
 	return s.abstract
 }
 
 func (s *ipv4Impl) FromAzure(az string) {
 	s.unset()
+	if len(az) == 0 {
+		return
+	}
 	s.abstract = AzureAbstractIPNormal
 	if az == "*" {
 		s.setRange(ipMin, ipMax)
@@ -927,9 +963,12 @@ func (s *ipv4Impl) Equals(o *ipv4Impl) bool {
 	if o == nil {
 		return false
 	}
+	if s.abstract == AzureAbstractIPEmpty {
+		return o.abstract == AzureAbstractIPEmpty
+	}
 	if s.isSpecial {
 		if o.isSpecial {
-			return s.raw == o.raw
+			return s.abstract == o.abstract && s.raw == o.raw
 		} else {
 			return false
 		}
@@ -950,6 +989,7 @@ func (s *ipv4Impl) Equals(o *ipv4Impl) bool {
 				return false
 			}
 		}
+		return true
 	}
 	return s.rangeOrSingle.equals(o.rangeOrSingle)
 }
@@ -1073,9 +1113,14 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 		return BoolFalse
 	}
 
-	// I guess?
+	// TODO I think this should be false...
 	if find == nil {
 		return BoolTrue
+	}
+
+	// Empty can't contain anything and nothing can contain empty
+	if in.GetType() == AzureAbstractIPEmpty || find.GetType() == AzureAbstractIPEmpty {
+		return BoolFalse
 	}
 
 	// If they're both special, we know that they are equal for our purposes.

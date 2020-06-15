@@ -171,6 +171,19 @@ func testAzureIPv4(
 			t.Fatalf("range was supposed to be set on %s but end wasn't", ip)
 		}
 	}
+	// Ensure marshal and unmarshal match up
+	b, err := ip.MarshalJSON()
+	if err != nil {
+		t.Fatalf("couldn't marshal ip %s", ip)
+	}
+	unmarsh := NewEmptyAzureIPv4()
+	err = unmarsh.UnmarshalJSON(b)
+	if err != nil {
+		t.Fatalf("failed to unmarshal %s", string(b))
+	}
+	if !IPsEqual(ip, unmarsh).True() {
+		t.Fatalf("unmarshal error %s turned into %s", ip, unmarsh)
+	}
 }
 
 func mapToUint32(s []string) []uint32 {
@@ -412,5 +425,23 @@ func TestIPStarContainsSpecials(t *testing.T) {
 		if !contains.True() {
 			t.Fatalf("* IP didn't contain special %s: %v", ipS, contains)
 		}
+	}
+}
+
+func TestEmptyIP(t *testing.T) {
+	azure := ""
+	ip := NewAzureIPv4FromAzure(azure)
+	shouldntContain := []string{
+		"0.0.0.1",
+		"192.168.1.21",
+	}
+	testAzureIPv4(
+		t, ip, []string{}, shouldntContain, azure, false, false, false,
+		0, []string{}, []uint32{},
+	)
+	// Empty IPs can't even contain themselves
+	contains := ip.Contains("")
+	if !contains.False() {
+		t.Fatalf("empty IPs shouldn't even contain empty IPs")
 	}
 }
