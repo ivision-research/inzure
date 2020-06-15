@@ -54,7 +54,6 @@ const (
 	AzureAbstractIPAzureLoadBalancer
 	AzureAbstractIPInternet
 	AzureAbstractIPNormal
-	AzureAbstractIPResourceID
 )
 
 const (
@@ -174,10 +173,6 @@ type ipv4Impl struct {
 	// Azure can sometimes represent an IP address as a comma separated list
 	// if IP addresses.
 	multiple []rangeOrSingle
-
-	// Azure sometimes allows you to specify a given resource to specify an
-	// ip range. For example, a a virtual network can be given.
-	resource *ResourceID
 }
 
 func (c *rangeOrSingle) size() uint64 {
@@ -923,14 +918,7 @@ func (s *ipv4Impl) FromAzure(az string) {
 			// right anymore" which might be an issue with maintainability..
 			s.FromAzure("168.63.129.16,169.254.169.254")
 		default:
-			// Is the "IP" actually a resource string?
-			if StringLooksLikeResourceID(az) {
-				s.abstract = AzureAbstractIPResourceID
-				s.resource = new(ResourceID)
-				s.resource.FromID(az)
-			} else {
-				s.abstract = AzureAbstractIPUnknown
-			}
+			s.abstract = AzureAbstractIPUnknown
 		}
 	}
 }
@@ -941,13 +929,6 @@ func (s *ipv4Impl) Equals(o *ipv4Impl) bool {
 	}
 	if s.isSpecial {
 		if o.isSpecial {
-			if s.resource != nil {
-				if o.resource != nil {
-					return s.resource.Equals(o.resource)
-				} else {
-					return false
-				}
-			}
 			return s.raw == o.raw
 		} else {
 			return false
@@ -1097,12 +1078,10 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 		return BoolTrue
 	}
 
-	// Checking specials here makes sense, but we're going to have to be
-	// careful since some specials cannot be considered to trivially contain
-	// themselves.
+	// If they're both special, we know that they are equal for our purposes.
 	if in.IsSpecial() {
 		if find.IsSpecial() {
-			return specialsTriviallyContained(in.GetType(), find.GetType())
+			return unknownFromBool(in.GetType() == find.GetType())
 		}
 		// One case that is obvious here is if find is *, we know * isn't
 		// contained in any Specials.
@@ -1199,11 +1178,4 @@ func IPInList(chk AzureIPv4, list []AzureIPv4) UnknownBool {
 		return BoolUnknown
 	}
 	return BoolFalse
-}
-
-func specialsTriviallyContained(in AzureAbstractIPType, find AzureAbstractIPType) UnknownBool {
-	if in == AzureAbstractIPResourceID || find == AzureAbstractIPResourceID {
-		return BoolUnknown
-	}
-	return unknownFromBool(in == find)
 }
