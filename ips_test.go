@@ -445,3 +445,33 @@ func TestEmptyIP(t *testing.T) {
 		t.Fatalf("empty IPs shouldn't even contain empty IPs")
 	}
 }
+
+func TestRFC1918IPAddresses(t *testing.T) {
+	addrs := []AzureIPv4{
+		NewAzureIPv4FromAzure("192.168.0.0/16"),
+		NewAzureIPv4FromAzure("192.168.155.12"),
+		NewAzureIPv4FromAzure("172.16.0.0/12"),
+		NewAzureIPv4FromAzure("172.19.12.123"),
+		NewAzureIPv4FromAzure("10.0.0.0/8"),
+		NewAzureIPv4FromAzure("10.100.100.0"),
+	}
+
+	for _, a := range addrs {
+		if !IPIsRFC1918Private(a) {
+			t.Fatalf("%s should be rfc1918 private", a)
+		}
+	}
+	edgeAddrs := []AzureIPv4{
+		NewAzureIPv4FromAzure("11.0.0.0"),
+		NewAzureIPv4FromAzure("9.255.255.255"),
+		NewAzureIPv4FromAzure("172.32.0.0"),
+		NewAzureIPv4FromAzure("172.15.255.155"),
+		NewAzureIPv4FromAzure("192.169.0.0"),
+		NewAzureIPv4FromAzure("192.167.255.255"),
+	}
+	for _, a := range edgeAddrs {
+		if IPIsRFC1918Private(a) {
+			t.Fatalf("%s shouldn't be rfc1918 private", a)
+		}
+	}
+}

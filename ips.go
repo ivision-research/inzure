@@ -184,6 +184,9 @@ func (c *rangeOrSingle) size() uint64 {
 }
 
 func (s *ipv4Impl) Size() uint64 {
+	if s.abstract == AzureAbstractIPEmpty {
+		return 0
+	}
 	if s.isSpecial {
 		return 0
 	}
@@ -1223,4 +1226,23 @@ func IPInList(chk AzureIPv4, list []AzureIPv4) UnknownBool {
 		return BoolUnknown
 	}
 	return BoolFalse
+}
+
+var rfc1918PrivateSpaces = []AzureIPv4{
+	NewAzureIPv4FromAzure("192.168.0.0/16"),
+	NewAzureIPv4FromAzure("172.16.0.0/12"),
+	NewAzureIPv4FromAzure("10.0.0.0/8"),
+}
+
+func IPIsRFC1918Private(ip AzureIPv4) bool {
+	is, start, end := ip.ContinuousRangeUint32()
+	if !is.True() {
+		return false
+	}
+	for _, priv := range rfc1918PrivateSpaces {
+		if priv.ContainsRangeUint32(start, end).True() {
+			return true
+		}
+	}
+	return false
 }
