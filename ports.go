@@ -23,7 +23,7 @@ type AzurePort interface {
 	// be completely unrelated to its previous value.
 	FromAzure(string)
 	// AsUint16 should return the port as a uint16. The behavior of this
-	// function is undefined if Size() > 1.
+	// function is undefined if Size() != 1.
 	AsUint16() uint16
 	// Contains tells us if this rule contains the given port
 	Contains(uint16) bool
@@ -98,12 +98,13 @@ func (p *portRangeOrSingle) allPorts() []uint16 {
 }
 
 type portImpl struct {
+	empty bool
 	portRangeOrSingle
 	multiple []portRangeOrSingle
 }
 
 func (p *portImpl) IsStar() bool {
-	if p.multiple != nil {
+	if p.empty || p.multiple != nil {
 		return false
 	}
 	return p.begin.val == 0 && p.end.val == maxPort
@@ -126,6 +127,9 @@ func (p *portImpl) AllPortsGen(ctx context.Context, buf int) <-chan uint16 {
 	}
 	go func() {
 		defer close(c)
+		if p.empty {
+			return
+		}
 		if p.multiple != nil {
 			for _, mp := range p.multiple {
 				if mp.single.set {
@@ -157,6 +161,9 @@ func (p *portImpl) AllPortsGen(ctx context.Context, buf int) <-chan uint16 {
 }
 
 func (p *portImpl) AllPorts() []uint16 {
+	if p.empty {
+		return []uint16{}
+	}
 	if p.multiple != nil {
 		s := make([]uint16, 0, 10)
 		for _, mp := range p.multiple {
@@ -168,6 +175,9 @@ func (p *portImpl) AllPorts() []uint16 {
 }
 
 func (p *portImpl) ContinuousRange() (bool, uint16, uint16) {
+	if p.empty {
+		return false, 0, 0
+	}
 	if p.single.set {
 		return true, p.single.val, p.single.val
 	} else if p.end.set && p.begin.set {
@@ -177,6 +187,9 @@ func (p *portImpl) ContinuousRange() (bool, uint16, uint16) {
 }
 
 func (p *portImpl) ContainsRange(begin uint16, end uint16) bool {
+	if p.empty {
+		return false
+	}
 	if p.multiple != nil {
 		for _, mp := range p.multiple {
 			if mp.containsRange(begin, end) {
@@ -189,6 +202,9 @@ func (p *portImpl) ContainsRange(begin uint16, end uint16) bool {
 }
 
 func (p *portImpl) Size() uint32 {
+	if p.empty {
+		return 0
+	}
 	if p.multiple != nil {
 		size := uint32(0)
 		for _, mport := range p.multiple {
@@ -207,6 +223,9 @@ func (p *portImpl) AsUint16() uint16 {
 }
 
 func (p *portImpl) Contains(port uint16) bool {
+	if p.empty {
+		return false
+	}
 	if p.multiple != nil {
 		for _, m := range p.multiple {
 			if m.contains(port) {
@@ -220,6 +239,7 @@ func (p *portImpl) Contains(port uint16) bool {
 
 func (p *portImpl) unset() {
 	*p = portImpl{
+		empty:             true,
 		portRangeOrSingle: portRangeOrSingle{},
 		multiple:          nil,
 	}
@@ -238,6 +258,9 @@ func (p *portRangeOrSingle) String() string {
 }
 
 func (p *portImpl) String() string {
+	if p.empty {
+		return ""
+	}
 	if p.multiple != nil {
 		collection := make([]string, 0, len(p.multiple))
 		for _, m := range p.multiple {
@@ -305,6 +328,12 @@ func (p *portRangeOrSingle) fromRange(az string) {
 	p.setRange(uint16(begin), uint16(end))
 }
 
+func NewEmptyPort() AzurePort {
+	ret := new(portImpl)
+	ret.empty = true
+	return ret
+}
+
 func NewPortFromUint16(p uint16) AzurePort {
 	ret := new(portImpl)
 	ret.portRangeOrSingle.single.setVal(p)
@@ -333,6 +362,9 @@ func newPortImplFromAzure(az string) *portImpl {
 }
 
 func (p *portImpl) MarshalJSON() ([]byte, error) {
+	if p.empty {
+		return []byte("\"\""), nil
+	}
 	return []byte(fmt.Sprintf("\"%s\"", p.String())), nil
 }
 
@@ -421,6 +453,10 @@ func isMultiplePorts(az string) bool {
 
 func (p *portImpl) FromAzure(az string) {
 	p.unset()
+	p.empty = len(az) == 0
+	if p.empty {
+		return
+	}
 	if az == "*" {
 		p.setRange(0, maxPort)
 	} else if isSinglePort(az) {
@@ -435,6 +471,9 @@ func (p *portImpl) FromAzure(az string) {
 func (p *portImpl) Equals(o *portImpl) bool {
 	if o == nil {
 		return false
+	}
+	if p.empty {
+		return o.empty
 	}
 	if p.multiple != nil {
 		if o.multiple == nil {
@@ -563,10 +602,15 @@ func PortsEqual(a AzurePort, b AzurePort) bool {
 }
 
 func PortContains(in AzurePort, find AzurePort) bool {
-	if find.Size() > in.Size() {
+	inSize := in.Size()
+	findSize := find.Size()
+	if inSize == 0 || findSize == 0 {
 		return false
 	}
-	if find.Size() == 1 {
+	if findSize > inSize {
+		return false
+	}
+	if findSize == 1 {
 		return in.Contains(find.AsUint16())
 	}
 
@@ -575,7 +619,7 @@ func PortContains(in AzurePort, find AzurePort) bool {
 		return in.ContainsRange(findBegin, findEnd)
 	}
 
-	if find.Size() < 100 {
+	if findSize < 100 {
 		ports := find.AllPorts()
 		for _, p := range ports {
 			if !in.Contains(p) {
