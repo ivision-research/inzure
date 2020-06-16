@@ -184,44 +184,65 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 	c := make(chan *APIService, bufSize)
 	go func() {
 		defer close(c)
+		innerCtx, innerCancel := context.WithCancel(ctx)
+
+		defer innerCancel()
+
+		rd := func(responder autorest.Responder) autorest.Responder {
+			return autorest.ResponderFunc(func(r *http.Response) error {
+				if r.StatusCode == 502 {
+					innerCancel()
+				}
+				return responder.Respond(r)
+			})
+		}
+
 		bc := apimanagement.NewBackendClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		bc.Authorizer = impl.authorizer
+		bc.ResponseInspector = rd
 		ac := apimanagement.NewAPIClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		ac.Authorizer = impl.authorizer
+		ac.ResponseInspector = rd
 		oc := apimanagement.NewAPIOperationClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		oc.Authorizer = impl.authorizer
+		oc.ResponseInspector = rd
 		pc := apimanagement.NewProductClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		pc.Authorizer = impl.authorizer
+		pc.ResponseInspector = rd
 		sc := apimanagement.NewServiceClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		sc.Authorizer = impl.authorizer
+		sc.ResponseInspector = rd
 		schc := apimanagement.NewAPISchemaClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		schc.Authorizer = impl.authorizer
+		schc.ResponseInspector = rd
 		pss := apimanagement.NewSignUpSettingsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		pss.Authorizer = impl.authorizer
+		pss.ResponseInspector = rd
 		uc := apimanagement.NewUserClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
 		uc.Authorizer = impl.authorizer
-		it, err := sc.ListByResourceGroupComplete(ctx, rg)
+		uc.ResponseInspector = rd
+		it, err := sc.ListByResourceGroupComplete(innerCtx, rg)
 		if err != nil {
-			sendErr(ctx, genericError(sub, ApiT, "ListAPIServices", err), ec)
+			sendErr(innerCtx, genericError(sub, ApiT, "ListAPIServices", err), ec)
 			return
 		}
 
 		for it.NotDone() {
-			service := NewEmptyAPIService()
 			s := it.Value()
 			if s.Name == nil {
 				sendErr(
-					ctx, genericError(
+					innerCtx, genericError(
 						sub, ApiServiceT, "ListAPIServices",
 						errors.New("service had no name"),
 					), ec,
 				)
 				continue
 			}
+			service := NewEmptyAPIService()
 			service.FromAzure(&s)
-			prodIt, err := pc.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil, nil)
+			prodIt, err := pc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil, nil)
 			if err != nil {
-				sendErr(ctx, genericError(sub, ApiServiceT, "ListByServiceComplete", err), ec)
+				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListByServiceComplete", err), ec)
 			} else {
 				for prodIt.NotDone() {
 					prod := NewEmptyAPIServiceProduct()
@@ -229,15 +250,15 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 					prod.FromAzure(&azProd)
 					service.Products = append(service.Products, prod)
 					if err := prodIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, ApiT, "ProductIterator.Next", err), ec)
+						sendErr(innerCtx, genericError(sub, ApiT, "ProductIterator.Next", err), ec)
 						break
 					}
 				}
 			}
 
-			usersIt, err := uc.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil)
+			usersIt, err := uc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil)
 			if err != nil {
-				sendErr(ctx, genericError(sub, ApiServiceT, "ListUsers", err), ec)
+				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListUsers", err), ec)
 			} else {
 				for usersIt.NotDone() {
 					azUser := usersIt.Value()
@@ -245,22 +266,22 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 					user.FromAzure(&azUser)
 					service.Users = append(service.Users, user)
 					if err := usersIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, ApiServiceT, "UserIterator.Next", err), ec)
+						sendErr(innerCtx, genericError(sub, ApiServiceT, "UserIterator.Next", err), ec)
 						break
 					}
 				}
 			}
 
-			portSign, err := pss.Get(ctx, rg, *s.Name)
+			portSign, err := pss.Get(innerCtx, rg, *s.Name)
 			if err != nil {
-				sendErr(ctx, genericError(sub, ApiServiceT, "GetPortalSignupSettings", err), ec)
+				sendErr(innerCtx, genericError(sub, ApiServiceT, "GetPortalSignupSettings", err), ec)
 			} else {
 				service.addSignupSettingsFromAzure(&portSign)
 			}
 
-			beIt, err := bc.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil)
+			beIt, err := bc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil)
 			if err != nil {
-				sendErr(ctx, genericError(sub, ApiBackendT, "ListByServiceComplete", err), ec)
+				sendErr(innerCtx, genericError(sub, ApiBackendT, "ListByServiceComplete", err), ec)
 			} else {
 				for beIt.NotDone() {
 					be := NewEmptyAPIBackend()
@@ -268,30 +289,30 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 					be.FromAzure(&azBe)
 					service.Backends = append(service.Backends, be)
 					if err := beIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, ApiBackendT, "Iterator.Next", err), ec)
+						sendErr(innerCtx, genericError(sub, ApiBackendT, "Iterator.Next", err), ec)
 						break
 					}
 				}
 			}
-			apiIt, err := ac.ListByServiceComplete(ctx, rg, *s.Name, "", nil, nil, nil)
+			apiIt, err := ac.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil, nil)
 			if err != nil {
-				sendErr(ctx, genericError(sub, ApiServiceT, "ListAPIs", err), ec)
-				continue
+				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListAPIs", err), ec)
+				return
 			}
 			for apiIt.NotDone() {
 				api := NewEmptyAPI()
 				azApi := apiIt.Value()
 				api.FromAzure(&azApi)
 				if azApi.ID == nil {
-					sendErr(ctx, genericError(sub,
+					sendErr(innerCtx, genericError(sub,
 						ApiT, "ListAPIs",
 						errors.New("api had no ID"),
 					), ec)
 					continue
 				}
-				opIt, err := oc.ListByAPIComplete(ctx, rg, *s.Name, api.Meta.Name, "", nil, nil)
+				opIt, err := oc.ListByAPIComplete(innerCtx, rg, *s.Name, api.Meta.Name, "", nil, nil)
 				if err != nil {
-					sendErr(ctx, genericError(sub, ApiOperationT, "ListByAPIComplete", err), ec)
+					sendErr(innerCtx, genericError(sub, ApiOperationT, "ListByAPIComplete", err), ec)
 				} else {
 					for opIt.NotDone() {
 						op := NewEmptyAPIOperation()
@@ -299,14 +320,14 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 						op.FromAzure(&azOp)
 						api.Operations = append(api.Operations, op)
 						if err := opIt.Next(); err != nil {
-							sendErr(ctx, genericError(sub, ApiOperationT, "OperationIterator.Next", err), ec)
+							sendErr(innerCtx, genericError(sub, ApiOperationT, "OperationIterator.Next", err), ec)
 							break
 						}
 					}
 				}
-				schIt, err := schc.ListByAPIComplete(ctx, rg, *s.Name, api.Meta.Name)
+				schIt, err := schc.ListByAPIComplete(innerCtx, rg, *s.Name, api.Meta.Name)
 				if err != nil {
-					sendErr(ctx, genericError(sub, ApiSchemaT, "ListByAPIComplete", err), ec)
+					sendErr(innerCtx, genericError(sub, ApiSchemaT, "ListByAPIComplete", err), ec)
 				} else {
 					for schIt.NotDone() {
 						schema := NewEmptyAPISchema()
@@ -314,23 +335,24 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 						schema.FromAzure(&azSchema)
 						api.Schemas = append(api.Schemas, schema)
 						if err := schIt.Next(); err != nil {
-							sendErr(ctx, genericError(sub, ApiSchemaT, "SchemaIterator.Next", err), ec)
+							sendErr(innerCtx, genericError(sub, ApiSchemaT, "SchemaIterator.Next", err), ec)
 							break
 						}
 					}
 				}
 				service.APIs = append(service.APIs, api)
 				if err := apiIt.Next(); err != nil {
-					sendErr(ctx, genericError(sub, ApiT, "ApiIterator.Next", err), ec)
+					sendErr(innerCtx, genericError(sub, ApiT, "ApiIterator.Next", err), ec)
 					break
 				}
 			}
 			select {
 			case c <- service:
-			case <-ctx.Done():
+			case <-innerCtx.Done():
+				return
 			}
 			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, ApiT, "ServiceIterator.Next", err), ec)
+				sendErr(innerCtx, genericError(sub, ApiT, "ServiceIterator.Next", err), ec)
 				break
 			}
 		}
