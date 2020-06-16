@@ -71,9 +71,17 @@ type ParentResource struct {
 	Tag  AzureResourceTag
 }
 
+func (r *ResourceID) SetupEmpty() {
+	r.setupEmpty()
+}
+
 func (r *ResourceID) setupEmpty() {
 	//r.Parents = make([]ParentResource, 0)
 	r.Tag = ResourceUnsetT
+	r.RawID = ""
+	r.Subscription = ""
+	r.ResourceGroupName = ""
+	r.Name = ""
 }
 
 // Equals tests two ParentResources for equality

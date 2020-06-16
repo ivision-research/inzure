@@ -1,5 +1,7 @@
 package inzure
 
+import "fmt"
+
 // AttackSurface contains a collection of IP addresses and domain names
 // that may POTENTIALLY be exposed. Note that there is no evaluation of
 // firewalls at this point!
@@ -19,9 +21,12 @@ type AttackSurface struct {
 	APIServices       []APIServiceAttackSurface
 }
 
+// LoadBalancerAttackSurface provides both a list of frontend IPs, backend IPs,
+// and an association of frontend to backend ips
 type LoadBalancerAttackSurface struct {
 	Frontends []string
 	Backends  []string
+	Paths     map[string]string
 }
 
 // APIServiceAttackSurface is the attack surface presented by managed APIs.
@@ -96,6 +101,7 @@ func (s *Subscription) GetAttackSurface() AttackSurface {
 			lbas := LoadBalancerAttackSurface{
 				Frontends: make([]string, 0, len(lb.FrontendIPs)),
 				Backends:  make([]string, 0, len(lb.Backends)),
+				Paths:     make(map[string]string),
 			}
 			for _, fip := range lb.FrontendIPs {
 				if fip.PublicIP.FQDN != "" {
@@ -114,7 +120,18 @@ func (s *Subscription) GetAttackSurface() AttackSurface {
 					}
 				}
 			}
-			if len(lbas.Backends) > 0 || len(lbas.Frontends) > 0 {
+			for _, rule := range lb.Rules {
+				if rule.FrontendIP.Size() > 0 &&
+					rule.BackendIP.Size() > 0 &&
+					rule.FrontendPort.Size() > 0 &&
+					rule.BackendPort.Size() > 0 &&
+					!IPIsRFC1918Private(rule.FrontendIP) {
+					key := fmt.Sprintf("%s:%s", rule.FrontendIP.String(), rule.FrontendPort.String())
+					val := fmt.Sprintf("%s:%s", rule.BackendIP.String(), rule.BackendPort.String())
+					lbas.Paths[key] = val
+				}
+			}
+			if len(lbas.Backends) > 0 || len(lbas.Frontends) > 0 || len(lbas.Paths) > 0 {
 				as.LoadBalancers = append(as.LoadBalancers, lbas)
 			}
 		}

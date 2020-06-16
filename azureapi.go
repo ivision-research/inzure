@@ -697,6 +697,16 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 			sub,
 		)
 		ipccl.Authorizer = impl.authorizer
+		rulescl := network.NewLoadBalancerLoadBalancingRulesClientWithBaseURI(
+			impl.env.ResourceManagerEndpoint,
+			sub,
+		)
+		rulescl.Authorizer = impl.authorizer
+		icl := network.NewInterfacesClientWithBaseURI(
+			impl.env.ResourceManagerEndpoint,
+			sub,
+		)
+		icl.Authorizer = impl.authorizer
 		var it network.LoadBalancerListResultIterator
 		var err error
 		if rg == "" {
@@ -733,6 +743,39 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 					}
 				}
 			}
+			getBackendVMSS := func(id ResourceID, vmss string, iface string, into *IPConfiguration) {
+
+				idx := id.ExtractValueForTag("virtualmachines", true)
+				name := id.ExtractValueForTag("ipconfigurations", true)
+				azIpc, err := icl.GetVirtualMachineScaleSetIPConfiguration(
+					ctx, id.ResourceGroupName, vmss, idx, iface, name, "")
+				if err != nil {
+					sendErr(
+						ctx, genericError(
+							sub, LoadBalancerT,
+							"GetIPForBackend", err,
+						), ec,
+					)
+					return
+				}
+				into.FromAzure(&azIpc)
+			}
+			getBackendRegularInterface := func(id ResourceID, iface string, into *IPConfiguration) {
+				azIpc, err := ipccl.Get(
+					ctx, id.ResourceGroupName,
+					iface, id.Name,
+				)
+				if err != nil {
+					sendErr(
+						ctx, genericError(
+							sub, LoadBalancerT,
+							"GetIPForBackend", err,
+						), ec,
+					)
+					return
+				}
+				into.FromAzure(&azIpc)
+			}
 			// We'll need to also look through the backend ipconfigurations
 			// since they are probably just references
 			for i := range lb.Backends {
@@ -741,22 +784,12 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 					// If both IPs are empty and we have a raw id, it is just a
 					// reference
 					if ipc.Meta.RawID != "" && (ipc.PrivateIP == "" && ipc.PublicIP.IP == "") {
+						vmss := ipc.Meta.ExtractValueForTag("virtualmachinescalesets", true)
 						iface := ipc.Meta.ExtractValueForTag("networkinterfaces", true)
-						if iface != "" {
-							azIpc, err := ipccl.Get(
-								ctx, ipc.Meta.ResourceGroupName,
-								iface, ipc.Meta.Name,
-							)
-							if err != nil {
-								sendErr(
-									ctx, genericError(
-										sub, LoadBalancerT,
-										"GetIPForBackend", err,
-									), ec,
-								)
-								continue
-							}
-							ipc.FromAzure(&azIpc)
+						if vmss != "" {
+							getBackendVMSS(ipc.Meta, vmss, iface, ipc)
+						} else if iface != "" {
+							getBackendRegularInterface(ipc.Meta, iface, ipc)
 						} else {
 							sendErr(
 								ctx, genericError(
@@ -771,6 +804,25 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 					}
 				}
 			}
+
+			rules, err := rulescl.ListComplete(ctx, lb.Meta.ResourceGroupName, lb.Meta.Name)
+			if err != nil {
+				sendErr(ctx, genericError(sub, LoadBalancerT, "ListRulesComplete", err), ec)
+			} else {
+				for rules.NotDone() {
+
+					azRule := rules.Value()
+
+					lb.AddLoadBalancerRule(&azRule)
+
+					err = rules.NextWithContext(ctx)
+					if err != nil {
+						sendErr(ctx, genericError(sub, LoadBalancerT, "GetNextRule", err), ec)
+						break
+					}
+				}
+			}
+
 			select {
 			case <-ctx.Done():
 				return
