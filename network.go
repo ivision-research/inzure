@@ -516,7 +516,7 @@ func (nsg *NetworkSecurityGroup) AllowsIPToPort(checkIP AzureIPv4, checkPort Azu
 			if contains.Unknown() {
 				unknownPrecedent = rule.Priority
 			} else if contains.True() {
-				for _, port := range rule.SourcePorts {
+				for _, port := range rule.DestPorts {
 					if PortContains(port, checkPort) {
 						if rule.Allows {
 							if rule.Priority < denyPrecedent {
