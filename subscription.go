@@ -117,6 +117,13 @@ type Subscription struct {
 	searchTargets map[SearchTarget]struct{}
 }
 
+func (s *Subscription) String() string {
+	if s.Alias != "" {
+		return s.Alias
+	}
+	return s.ID
+}
+
 // NewSubscriptionFromID creates a usable new Subscription from a
 // SubscriptionID.
 func NewSubscriptionFromID(id SubscriptionID) Subscription {
@@ -200,15 +207,15 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		return
 	}
 	if s.classicKey != nil {
-		s.log("Using key to enable classic accounts on %s\n", s.ID)
+		s.log("Using key to enable classic accounts on %s\n", s)
 		if err := azure.EnableClassic(s.classicKey, s.ID); err != nil {
 			ec <- err
 			return
 		}
 
 	}
-	s.log("Starting search for %s\n", s.ID)
-	defer s.log("Finished search for %s\n", s.ID)
+	s.log("[Begin] Subscription %s\n", s)
+	defer s.log("[End] Subscription %s\n", s)
 	s.AuditDate = time.Now()
 	// Classic resources need to live at the base of the subscription because
 	// they are not tied to a resource group.
@@ -221,8 +228,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.log("Searching for recommendations on `%s`\n", s.ID)
-			defer s.log("Done searching for recommendations\n")
+			s.log("[Begin] Recommendations on `%s`\n", s)
+			defer s.log("[End] Recommendations on `%s`\n", s)
 			for rec := range azure.GetRecommendations(ctx, s.ID, ec) {
 				s.log("Found recommendation `%s`\n", rec.Meta.Name)
 				s.Recommendations = append(s.Recommendations, rec)
@@ -233,8 +240,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		s.log("Searching for Resource Groups on `%s`\n", s.ID)
-		defer s.log("Done searching for Resource Groups on `%s`\n", s.ID)
+		s.log("[Begin] Resource Groups in `%s`\n", s)
+		defer s.log("[End] Resource Groups in `%s`\n", s)
 		for rg := range azure.GetResourceGroups(ctx, s.ID, ec) {
 
 			s.log("Found resource group `%s`\n", rg.Meta.Name)
@@ -247,8 +254,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
 					defer wg.Done()
-					s.log("Searching for App Services in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for App Services in `%s`\n", g.Meta.Name)
+					s.log("[Begin] App Services in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] App Services in `%s`/`%s`\n", s, g.Meta.Name)
 					for wa := range azure.GetWebApps(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found Azure App Service item `%s`\n", wa.Meta.Name)
 						g.WebApps = append(g.WebApps, wa)
@@ -258,8 +265,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetDataLakes]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Data Lake Stores in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for Data Lake Stores in `%s`\n", g.Meta.Name)
+					s.log("[Begin] Data Lake Stores in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] Data Lake Stores in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for dl := range azure.GetDataLakeStores(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found Data Lake Store `%s`\n", dl.Meta.Name)
@@ -268,8 +275,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 				}(rg)
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Data Lake Analytics in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for Data Lake Analytics in `%s`\n", g.Meta.Name)
+					s.log("[Begin] Data Lake Analytics in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] Data Lake Analytics in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for dl := range azure.GetDataLakeAnalytics(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found Data Lake Analytics `%s`\n", dl.Meta.Name)
@@ -281,8 +288,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetRedis]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Redis servers in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for Redis servers in `%s`\n", g.Meta.Name)
+					s.log("[Begin] Redis servers in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] Redis servers in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for rs := range azure.GetRedisServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found Redis Server `%s`\n", rs.Meta.Name)
@@ -294,8 +301,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetPostgres]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Postgres servers in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for Postgres servers in `%s`\n", g.Meta.Name)
+					s.log("[Begin] Postgres servers in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] Postgres servers in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for serv := range azure.GetPostgresServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found Postgres server `%s`\n", serv.Meta.Name)
@@ -307,8 +314,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetSQL]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for SQL servers in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for SQL servers in `%s`\n", g.Meta.Name)
+					s.log("[Begin] SQL servers in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] SQL servers in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for serv := range azure.GetSQLServers(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found SQL server `%s`\n", serv.Meta.Name)
@@ -320,8 +327,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetAPIs]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for APIs in `%s`\n", g.Meta.Name)
-					defer s.log("Finished searching for APIs in `%s`\n", g.Meta.Name)
+					s.log("[Begin] APIs in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] APIs in `%s`/`%s`\n", s, g.Meta.Name)
 					defer wg.Done()
 					for apiServ := range azure.GetAPIs(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
 						s.log("Found API Service `%s`\n", apiServ.Meta.Name)
@@ -333,8 +340,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetKeyVaults]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Key Vaults on subscription")
-					defer s.log("Finished searching for Key Vaults")
+					s.log("[Begin] Key Vaults in `%s`\n", s)
+					defer s.log("[End] Key Vaults in `%s`\n", s)
 					defer wg.Done()
 					for kv := range azure.GetKeyVaults(ctx, s.ID, g.Meta.Name, ec) {
 						s.log("Found Key Vault `%s`\n", kv.Meta.Name)
@@ -345,8 +352,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetLoadBalancers]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Load Balancers on subscription")
-					defer s.log("Finished searching for Load Balancers")
+					s.log("[Begin] Load Balancers in `%s`\n", s)
+					defer s.log("[End] Load Balancers in `%s`\n", s)
 					defer wg.Done()
 					for lb := range azure.GetLoadBalancers(ctx, s.ID, g.Meta.Name, ec) {
 						s.log("Found Load Balancer `%s`\n", lb.Meta.Name)
@@ -357,8 +364,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 			if _, do := s.searchTargets[TargetCosmosDBs]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {
-					s.log("Searching for Cosmos DBs on subscription")
-					defer s.log("Finished searching for Cosmos DBs")
+					s.log("[Begin] Cosmos DBs in `%s`\n", s)
+					defer s.log("[End] Cosmos DBs in `%s`\n", s)
 					defer wg.Done()
 					for db := range azure.GetCosmosDBs(ctx, s.ID, g.Meta.Name, ec) {
 						s.log("Found CosmosDB `%s`\n", db.Meta.Name)
@@ -385,8 +392,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.log("Searching for Network Interfaces on subscription")
-			defer s.log("Finished searching for Network Interfaces")
+			s.log("[Begin] Network Interfaces in `%s`\n", s)
+			defer s.log("[End] Network Interfaces in `%s`\n", s)
 			for iface := range azure.GetNetworkInterfaces(ctx, s.ID, ec) {
 				s.log("Found network interface `%s`\n", iface.Meta.Name)
 				ifaces = append(ifaces, iface)
@@ -394,8 +401,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		}()
 		wg.Add(1)
 		go func() {
-			s.log("Searching for Virtual Machines on subscription")
-			defer s.log("Finished searching for Virtual Machines")
+			s.log("[Begin] Virtual Machines in `%s`\n", s)
+			defer s.log("[End] Virtual Machines in `%s`\n", s)
 			defer wg.Done()
 			for vm := range azure.GetVirtualMachines(ctx, s.ID, ec) {
 				s.log("Found virtual machine `%s`\n", vm.Meta.Name)
@@ -404,8 +411,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		}()
 		wg.Add(1)
 		go func() {
-			s.log("Searching for Virtual Networks on subscription")
-			defer s.log("Finished searching for Virtual Networks")
+			s.log("[Begin] Virtual Networks in `%s`\n", s)
+			defer s.log("[End] Virtual Networks in `%s`\n", s)
 			defer wg.Done()
 			for vn := range azure.GetNetworks(ctx, s.ID, ec) {
 				s.log("Found virtual network `%s`\n", vn.Meta.Name)
@@ -414,8 +421,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		}()
 		wg.Add(1)
 		go func() {
-			s.log("Searching for Network Security Groups on subscription")
-			defer s.log("Finished searching for Network Security Groups")
+			s.log("[Begin] Network Security Groups in `%s`\n")
+			defer s.log("[End] Network Security Groups in `%s`\n")
 			defer wg.Done()
 			for nsg := range azure.GetNetworkSecurityGroups(ctx, s.ID, ec) {
 				s.log("Found network security group `%s`\n", nsg.Meta.Name)
@@ -425,8 +432,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 
 		wg.Add(1)
 		go func() {
-			s.log("Searching for Application Security Groups on subscription")
-			defer s.log("Finished searching for Network Security Groups")
+			s.log("[Begin] Application Security Groups in `%s`\n", s)
+			defer s.log("[End] Application Security Groups in `%s`\n", s)
 			defer wg.Done()
 			for asg := range azure.GetApplicationSecurityGroups(ctx, s.ID, ec) {
 				s.log("Found application security group `%s`\n", asg.Meta.Name)
@@ -484,8 +491,8 @@ func (s *Subscription) storageToResourceGroup(
 	ec chan<- error,
 	rg *ResourceGroup) {
 	defer wg.Done()
-	s.log("Searching for storage accounts on `%s`\n", rg.Meta.Name)
-	defer s.log("Finished searching for storage accounts on `%s`\n", rg.Meta.Name)
+	s.log("[Begin] Storage accounts in `%s`/`%s`\n", s, rg.Meta.Name)
+	defer s.log("[End] Storage accounts in `%s`/`%s`\n", s, rg.Meta.Name)
 	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, s.listKeys, ec) {
 		s.log("Found storage account %s\n", sa.Meta.Name)
 		wg.Add(1)
@@ -512,8 +519,8 @@ func (s *Subscription) handleStorageAccount(
 
 	wg.Add(1)
 	go func(acc *StorageAccount) {
-		s.log("Searching storage account `%s` for containers\n", sacc.Meta.Name)
-		defer s.log("Done searching storage account `%s` for containers\n", sacc.Meta.Name)
+		s.log("[Begin] Searching storage account `%s` for containers\n", sacc.Meta.Name)
+		defer s.log("[End] Searching storage account `%s` for containers\n", sacc.Meta.Name)
 		defer wg.Done()
 		for c := range azure.GetContainers(ctx, acc, ec) {
 			s.log("Found container `%s` in storage account `%s`\n", c.Name, sacc.Meta.Name)
@@ -527,8 +534,8 @@ func (s *Subscription) doClassic(
 	azure AzureAPI,
 	wg *sync.WaitGroup,
 	ec chan<- error) {
-	s.log("Searching for classic storage accounts\n")
-	defer s.log("Finished searching classic storage accounts\n")
+	s.log("[Begin] Classic storage accounts in `%s`\n", s)
+	defer s.log("[End] Classic storage accounts in `%s`\n", s)
 	defer wg.Done()
 	if _, ok := s.searchTargets[TargetStorageAccounts]; ok {
 		for sa := range azure.GetClassicStorageAccounts(ctx, ec) {

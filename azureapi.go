@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 
@@ -121,22 +120,6 @@ func (impl *azureImpl) EnableClassic(key []byte, sub string) (err error) {
 		impl.doClassic = false
 	}
 	return
-}
-
-// I'm not sure if I need this anymore
-func autorestVersionSetter(version string) func(p autorest.Preparer) autorest.Preparer {
-	return func(p autorest.Preparer) autorest.Preparer {
-		return autorest.PreparerFunc(func(r *http.Request) (*http.Request, error) {
-			v := r.URL.Query()
-			d, err := url.QueryUnescape(version)
-			if err != nil {
-				return r, nil
-			}
-			v.Set("api-version", d)
-			r.URL.RawQuery = v.Encode()
-			return r, nil
-		})
-	}
 }
 
 func sendErr(ctx context.Context, e error, ec chan<- error) {
