@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestEncryptDecrypt(t *testing.T) {
+	msg := "Hello this is an encrypted message that should be multiple blocks"
+	key := [32]byte{
+		0xa9, 0x4b, 0x18, 0xf4, 0xad, 0xed, 0xea, 0x89,
+		0xc0, 0xa5, 0x4b, 0xf3, 0x03, 0x5c, 0xff, 0x16,
+		0xf8, 0xef, 0x2d, 0xf9, 0xce, 0x7b, 0x88, 0x6d,
+		0x4e, 0x4e, 0x62, 0xd1, 0xdf, 0x98, 0xa1, 0x6d,
+	}
+
+	var buf bytes.Buffer
+	err := encrypt(key[:], []byte(msg), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, err := decrypt(key[:], &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != string(dec) {
+		t.Fatalf("%s != %s", string(dec), msg)
+	}
+}
+
 func TestEncryptSubscription(t *testing.T) {
 	pw := []byte("foobar")
 	var buf bytes.Buffer
