@@ -421,8 +421,8 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 		}()
 		wg.Add(1)
 		go func() {
-			s.log("[Begin] Network Security Groups in `%s`\n")
-			defer s.log("[End] Network Security Groups in `%s`\n")
+			s.log("[Begin] Network Security Groups in `%s`\n", s)
+			defer s.log("[End] Network Security Groups in `%s`\n", s)
 			defer wg.Done()
 			for nsg := range azure.GetNetworkSecurityGroups(ctx, s.ID, ec) {
 				s.log("Found network security group `%s`\n", nsg.Meta.Name)
