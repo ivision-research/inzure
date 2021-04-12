@@ -6,8 +6,8 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"search",
 		map[string]autocomplete.CompleteFunc{
-			"f": autocomplete.InzureJSONAutoComplete,
-			"o": autocomplete.FileAutoComplete,
+			"f":                        autocomplete.InzureJSONAutoComplete,
+			"o":                        autocomplete.FileAutoComplete,
 			autocomplete.Positional(1): autocomplete.IQSAutoComplete,
 		},
 	)

@@ -6,11 +6,6 @@ require (
 	contrib.go.opencensus.io/exporter/ocagent v0.4.10 // indirect
 	github.com/Azure/azure-sdk-for-go v27.0.0+incompatible
 	github.com/Azure/go-autorest v11.7.0+incompatible
-	github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc
-	github.com/chzyer/logex v1.1.10 // indirect
-	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e
-	github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1 // indirect
-	github.com/codegangsta/cli v0.0.0-20180821064027-934abfb2f102
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dimchansky/utfbom v0.0.0-20170328061312-6c6132ff69f0 // indirect
 	github.com/dnaeon/go-vcr v1.0.1 // indirect

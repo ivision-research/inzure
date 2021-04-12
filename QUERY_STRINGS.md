@@ -1,6 +1,6 @@
 # Inzure Query Strings
 
-Inzure Query Strings provide a method to query data quickly and perform basic tests with just a string. They form their only mini query "language" for inzure data, and can be very useful. The main uses for query strings are:
+Inzure Query Strings provide a method to query data quickly and perform basic tests with just a string. They form their only mini query "language" for inzure data and can be very useful. The main uses for query strings are:
 
 1. Pass simple identifiers between programs
 2. Query inzure data directly using conditionals
@@ -71,4 +71,4 @@ Note that, in the above conditions, I always used `!= BoolFalse` instead of `== 
 
 ## Tooling
 
-If you use the included `inzure` binary, the `inzure search` command allows for querying with Inzure Query Strings. It also has autocomplete functionality (mosted tested in `zsh`, but the `bash` ones seem to work too) which can help remember fields to use.
+If you use the included `inzure` binary, the `inzure search` command allows for querying with Inzure Query Strings. It also has autocomplete functionality (mostly tested in `zsh`, but the `bash` ones seem to work too) which can help remember fields to use.

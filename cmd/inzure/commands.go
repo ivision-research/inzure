@@ -5,7 +5,7 @@ import (
 	"os"
 
 	internal "github.com/CarveSystems/inzure/cmd/inzure/internal"
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 )
 
 var GlobalFlags = []cli.Flag{

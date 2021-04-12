@@ -13,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/CarveSystems/inzure"
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 )
 
 var (

@@ -3,7 +3,7 @@ package internal
 import (
 	"encoding/json"
 
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 )
 
 var CmdDumpFlags = []cli.Flag{

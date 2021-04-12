@@ -8,7 +8,7 @@ import (
 	"github.com/CarveSystems/inzure/cmd/inzure/internal"
 	"github.com/CarveSystems/inzure/cmd/inzure/internal/autocomplete"
 	"github.com/chzyer/readline"
-	"github.com/codegangsta/cli"
+	"github.com/urfave/cli"
 )
 
 func setPassword(ctx *cli.Context) error {
