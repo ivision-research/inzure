@@ -1,4 +1,4 @@
-module github.com/CarveSystems/inzure
+module github.com/CarveSystems/inzure/inzure
 
 go 1.12
 

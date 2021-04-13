@@ -2,7 +2,7 @@ module github.com/CarveSystems/inzure/cmd/inzure
 
 go 1.16
 
-replace github.com/CarveSystems/inzure => ../../lib
+replace github.com/CarveSystems/inzure => ../../inzure
 
 require (
 	github.com/CarveSystems/inzure v0.0.1
