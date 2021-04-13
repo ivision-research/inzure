@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/CarveSystems/inzure"
+	"github.com/CarveSystems/inzure/pkg/inzure"
 	"github.com/urfave/cli"
 )
 

@@ -3,7 +3,7 @@ package internal
 import (
 	"encoding/json"
 
-	"github.com/CarveSystems/inzure"
+	"github.com/CarveSystems/inzure/pkg/inzure"
 	"github.com/urfave/cli"
 )
 
