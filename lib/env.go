@@ -41,7 +41,10 @@ func getBatchFileNames() ([]string, error) {
 	files := make([]string, 0)
 	scanner := NewLineCommentScanner(f)
 	for scanner.Scan() {
-		files = append(files, scanner.Text())
+		fileName := scanner.Text()
+		if fileName != "" {
+			files = append(files, scanner.Text())
+		}
 	}
 	if scanner.Err() != nil {
 		return nil, scanner.Err()
@@ -66,7 +69,10 @@ func SubscriptionIDsFromEnv() ([]SubscriptionID, error) {
 	ids := make([]SubscriptionID, 0)
 	scanner := NewLineCommentScanner(f)
 	for scanner.Scan() {
-		ids = append(ids, SubIDFromString(scanner.Text()))
+		idString := scanner.Text()
+		if idString != "" {
+			ids = append(ids, SubIDFromString(scanner.Text()))
+		}
 	}
 	if scanner.Err() != nil {
 		return nil, scanner.Err()
