@@ -75,7 +75,7 @@ var CmdGatherFlags = []cli.Flag{
 
 func scanGetSubscriptionsFromFile() error {
 	if GatherSubscriptionFile == "" {
-		return errors.New("no scan-file set")
+		return errors.New("must set either --sub or --sub-file")
 	}
 	f, err := os.Open(GatherSubscriptionFile)
 	if err != nil {
