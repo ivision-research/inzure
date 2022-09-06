@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 //go:generate stringer -type SearchTarget
@@ -115,6 +117,7 @@ type Subscription struct {
 	listKeys      bool
 	classicKey    []byte
 	searchTargets map[SearchTarget]struct{}
+	proxy         proxy.Dialer
 }
 
 func (s *Subscription) String() string {
@@ -189,6 +192,10 @@ func (s *Subscription) HasListKeysPermission(f bool) {
 	s.listKeys = f
 }
 
+func (s *Subscription) SetProxy(dialer proxy.Dialer) {
+	s.proxy = dialer
+}
+
 // SearchAllTargets searches all targets that are set with the AddTarget method
 // The passed error channel is closed when this method is complete. If a
 // classic key was given to this Subscription then this function also searches
@@ -205,6 +212,9 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 	if err != nil {
 		ec <- err
 		return
+	}
+	if s.proxy != nil {
+		azure.SetProxy(s.proxy)
 	}
 	if s.classicKey != nil {
 		s.log("Using key to enable classic accounts on %s\n", s)

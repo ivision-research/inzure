@@ -2,13 +2,16 @@ package inzure
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/advisor/mgmt/2017-04-19/advisor"
 	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
@@ -30,6 +33,7 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/azure/auth"
+	"golang.org/x/net/proxy"
 )
 
 const bufSize = 5
@@ -48,6 +52,17 @@ const bufSize = 5
 // To ignore direct usage of the API you can set up a Subscription to gather
 // the data you want and then pass it an API.
 type AzureAPI interface {
+	// SetProxy sets a custom proxy.Dialer for the client. Note that by default
+	// the HTTP_PROXY and HTTPS_PROXY environmental variables should be supported.
+	// This can also use proxy.Direct{} to completely bypass the proxy for some
+	// calls.
+	SetProxy(proxy proxy.Dialer)
+
+	// Resets the proxy to the default configuration. The default proxy
+	// configuration supports the HTTP_PROXY and HTTPS_PROXY environmental
+	// variables.
+	ClearProxy()
+
 	// GetResourceGroups gets all resource groups for the given subscription
 	// ResourceGroups are returned on the provided channel. They are empty
 	// except for basic identifying data. You can send those resource groups
@@ -108,6 +123,54 @@ type azureImpl struct {
 	env           azure.Environment
 	classicClient management.Client
 	doClassic     bool
+	sender        autorest.Sender
+}
+
+func getClientWithTransport(transport *http.Transport) *http.Client {
+	var roundTripper http.RoundTripper = transport
+	// TODO
+	// This was copy/pasted from the Azure go-rest project but doesn't
+	// seem to work with the versions we're using.
+
+	//if tracing.IsEnabled() {
+	//	roundTripper = tracing.NewTransport(transport)
+	//}
+	j, _ := cookiejar.New(nil)
+	return &http.Client{Jar: j, Transport: roundTripper}
+
+}
+
+func (impl *azureImpl) ClearProxy() {
+	impl.sender = nil
+}
+
+func makeProxyTransport(dialer proxy.Dialer) *http.Transport {
+	tport := &http.Transport{
+		Proxy:                 nil,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+
+	if v, is := dialer.(proxy.ContextDialer); is {
+		tport.DialContext = v.DialContext
+	}
+	tport.Dial = dialer.Dial
+	return tport
+}
+
+func (impl *azureImpl) SetProxy(dialer proxy.Dialer) {
+	if dialer == nil {
+		impl.ClearProxy()
+		return
+	}
+	transport := makeProxyTransport(dialer)
+	impl.sender = getClientWithTransport(transport)
 }
 
 func (impl *azureImpl) EnableClassic(key []byte, sub string) (err error) {
@@ -130,11 +193,22 @@ func sendErr(ctx context.Context, e error, ec chan<- error) {
 	}
 }
 
+func (impl *azureImpl) configureClient(client *autorest.Client) {
+	client.Authorizer = impl.authorizer
+	if impl.sender != nil {
+		client.Sender = impl.sender
+	}
+	client.UserAgent = fmt.Sprintf("inzure/%s (+https://www.github.com/CarveSystems/inzure)", LibVersion)
+	if impl.sender != nil {
+		client.Sender = impl.sender
+	}
+}
+
 func (impl *azureImpl) GetResourceGroups(ctx context.Context, sub string, errChan chan<- error) <-chan *ResourceGroup {
 	c := make(chan *ResourceGroup, bufSize)
 	go func() {
 		groups := resources.NewGroupsClient(sub)
-		groups.Authorizer = impl.authorizer
+		impl.configureClient(&groups.BaseClient.Client)
 		groups.BaseURI = impl.env.ResourceManagerEndpoint
 		defer close(c)
 		it, err := groups.ListComplete(ctx, "", nil)
@@ -181,28 +255,28 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 		}
 
 		bc := apimanagement.NewBackendClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		bc.Authorizer = impl.authorizer
+		impl.configureClient(&bc.BaseClient.Client)
 		bc.ResponseInspector = rd
 		ac := apimanagement.NewAPIClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		ac.Authorizer = impl.authorizer
+		impl.configureClient(&ac.BaseClient.Client)
 		ac.ResponseInspector = rd
 		oc := apimanagement.NewAPIOperationClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		oc.Authorizer = impl.authorizer
+		impl.configureClient(&oc.BaseClient.Client)
 		oc.ResponseInspector = rd
 		pc := apimanagement.NewProductClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		pc.Authorizer = impl.authorizer
+		impl.configureClient(&pc.BaseClient.Client)
 		pc.ResponseInspector = rd
 		sc := apimanagement.NewServiceClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		sc.Authorizer = impl.authorizer
+		impl.configureClient(&sc.BaseClient.Client)
 		sc.ResponseInspector = rd
 		schc := apimanagement.NewAPISchemaClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		schc.Authorizer = impl.authorizer
+		impl.configureClient(&schc.BaseClient.Client)
 		schc.ResponseInspector = rd
 		pss := apimanagement.NewSignUpSettingsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		pss.Authorizer = impl.authorizer
+		impl.configureClient(&pss.BaseClient.Client)
 		pss.ResponseInspector = rd
 		uc := apimanagement.NewUserClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		uc.Authorizer = impl.authorizer
+		impl.configureClient(&uc.BaseClient.Client)
 		uc.ResponseInspector = rd
 		it, err := sc.ListByResourceGroupComplete(innerCtx, rg)
 		if err != nil {
@@ -347,7 +421,7 @@ func (impl *azureImpl) GetRecommendations(ctx context.Context, sub string, ec ch
 	c := make(chan *Recommendation, bufSize)
 	go func() {
 		cl := advisor.NewRecommendationsClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		defer close(c)
 		it, err := cl.ListComplete(ctx, "", nil, "")
@@ -381,7 +455,7 @@ func (impl *azureImpl) GetDataLakeAnalytics(ctx context.Context, sub string, rg 
 	go func() {
 		defer close(c)
 		cl := lakeana.NewAccountsClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		it, err := cl.ListByResourceGroupComplete(ctx, rg, "", nil, nil, "", "", nil)
 		if err != nil {
@@ -418,7 +492,7 @@ func (impl *azureImpl) GetKeyVaults(ctx context.Context, sub string, rg string, 
 	go func() {
 		defer close(c)
 		cl := keyvault.NewVaultsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		it, err := cl.ListByResourceGroupComplete(ctx, rg, nil)
 		if err != nil {
 			sendErr(ctx, genericError(sub, KeyVaultT, "ListByResourceGroupComplete", err), ec)
@@ -449,7 +523,7 @@ func (impl *azureImpl) GetCosmosDBs(ctx context.Context, sub string, rg string, 
 		cl := documentdb.NewDatabaseAccountsClientWithBaseURI(
 			impl.env.ResourceManagerEndpoint, sub,
 		)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		ret, err := cl.ListByResourceGroup(ctx, rg)
 		if err != nil {
 			sendErr(ctx, genericError(sub, CosmosDBT, "ListByResourceGroup", err), ec)
@@ -476,7 +550,7 @@ func (impl *azureImpl) GetDataLakeStores(ctx context.Context, sub string, rg str
 	go func() {
 		defer close(c)
 		cl := lakestore.NewAccountsClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		it, err := cl.ListByResourceGroupComplete(ctx, rg, "", nil, nil, "", "", nil)
 		if err != nil {
@@ -513,16 +587,16 @@ func (impl *azureImpl) GetSQLServers(ctx context.Context, sub string, rg string,
 	go func() {
 		defer close(c)
 		cl := sqldb.NewServersClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		dbCl := sqldb.NewDatabasesClient(sub)
 		dbCl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl.Authorizer = impl.authorizer
+		impl.configureClient(&dbCl.BaseClient.Client)
 		fwCl := sqldb.NewFirewallRulesClient(sub)
-		fwCl.Authorizer = impl.authorizer
+		impl.configureClient(&fwCl.BaseClient.Client)
 		fwCl.BaseURI = impl.env.ResourceManagerEndpoint
 		vnrCl := sqldb.NewVirtualNetworkRulesClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		vnrCl.Authorizer = impl.authorizer
+		impl.configureClient(&vnrCl.BaseClient.Client)
 		it, err := cl.ListByResourceGroupComplete(ctx, rg)
 		if err != nil {
 			sendErr(ctx, genericError(sub, SQLServerT, "ListByResourceGroupComplete", err), ec)
@@ -581,16 +655,16 @@ func (impl *azureImpl) GetPostgresServers(ctx context.Context, sub string, rg st
 	go func() {
 		defer close(c)
 		cl := postgresql.NewServersClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		dbCl := postgresql.NewDatabasesClient(sub)
 		dbCl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl.Authorizer = impl.authorizer
+		impl.configureClient(&dbCl.BaseClient.Client)
 		fwCl := postgresql.NewFirewallRulesClient(sub)
-		fwCl.Authorizer = impl.authorizer
+		impl.configureClient(&fwCl.BaseClient.Client)
 		fwCl.BaseURI = impl.env.ResourceManagerEndpoint
 		vnrCl := postgresql.NewVirtualNetworkRulesClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		vnrCl.Authorizer = impl.authorizer
+		impl.configureClient(&vnrCl.BaseClient.Client)
 		ret, err := cl.ListByResourceGroup(ctx, rg)
 		if err != nil {
 			sendErr(ctx, genericError(sub, PostgresServerT, "ListByResourceGroupComplete", err), ec)
@@ -645,10 +719,10 @@ func (impl *azureImpl) GetNetworkInterfaces(ctx context.Context, sub string, ec 
 	go func() {
 		defer close(c)
 		cl := network.NewInterfacesClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		ipCl := network.NewPublicIPAddressesClient(sub)
-		ipCl.Authorizer = impl.authorizer
+		impl.configureClient(&ipCl.BaseClient.Client)
 		ipCl.BaseURI = impl.env.ResourceManagerEndpoint
 		it, err := cl.ListAllComplete(ctx)
 		if err != nil {
@@ -690,28 +764,28 @@ func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg stri
 	go func() {
 		defer close(c)
 		cl := network.NewLoadBalancersClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		pipcl := network.NewPublicIPAddressesClientWithBaseURI(
 			impl.env.ResourceManagerEndpoint,
 			sub,
 		)
-		pipcl.Authorizer = impl.authorizer
+		impl.configureClient(&pipcl.BaseClient.Client)
 		ipccl := network.NewInterfaceIPConfigurationsClientWithBaseURI(
 			impl.env.ResourceManagerEndpoint,
 			sub,
 		)
-		ipccl.Authorizer = impl.authorizer
+		impl.configureClient(&ipccl.BaseClient.Client)
 		rulescl := network.NewLoadBalancerLoadBalancingRulesClientWithBaseURI(
 			impl.env.ResourceManagerEndpoint,
 			sub,
 		)
-		rulescl.Authorizer = impl.authorizer
+		impl.configureClient(&rulescl.BaseClient.Client)
 		icl := network.NewInterfacesClientWithBaseURI(
 			impl.env.ResourceManagerEndpoint,
 			sub,
 		)
-		icl.Authorizer = impl.authorizer
+		impl.configureClient(&icl.BaseClient.Client)
 		var it network.LoadBalancerListResultIterator
 		var err error
 		if rg == "" {
@@ -847,7 +921,7 @@ func (impl *azureImpl) GetVirtualMachines(ctx context.Context, sub string, ec ch
 	go func() {
 		defer close(c)
 		cl := compute.NewVirtualMachinesClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		it, err := cl.ListAllComplete(ctx)
 		if err != nil {
@@ -877,7 +951,7 @@ func (impl *azureImpl) GetWebApps(ctx context.Context, sub string, rg string, ec
 	go func() {
 		defer close(c)
 		cl := web.NewAppsClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		includeSlots := true
 		it, err := cl.ListByResourceGroup(ctx, rg, &includeSlots)
@@ -935,10 +1009,10 @@ func (impl *azureImpl) GetRedisServers(ctx context.Context, sub string, rg strin
 	go func() {
 		defer close(c)
 		cl := redis.NewClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		fcl := redis.NewFirewallRulesClient(sub)
-		fcl.Authorizer = impl.authorizer
+		impl.configureClient(&fcl.BaseClient.Client)
 		fcl.BaseURI = impl.env.ResourceManagerEndpoint
 
 		it, err := cl.ListByResourceGroupComplete(ctx, rg)
@@ -982,7 +1056,7 @@ func (impl *azureImpl) GetApplicationSecurityGroups(ctx context.Context, sub str
 	go func() {
 		defer close(c)
 		asgcl := network.NewApplicationSecurityGroupsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		asgcl.Authorizer = impl.authorizer
+		impl.configureClient(&asgcl.BaseClient.Client)
 		it, err := asgcl.ListAllComplete(ctx)
 		if err != nil {
 			sendErr(ctx, genericError(sub, ApplicationSecurityGroupT, "ListAllComplete", err), ec)
@@ -1012,7 +1086,7 @@ func (impl *azureImpl) GetNetworkSecurityGroups(ctx context.Context, sub string,
 	go func() {
 		defer close(c)
 		cl := network.NewSecurityGroupsClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		it, err := cl.ListAllComplete(ctx)
 		if err != nil {
@@ -1043,10 +1117,10 @@ func (impl *azureImpl) GetNetworks(ctx context.Context, sub string, ec chan<- er
 	go func() {
 		defer close(c)
 		cl := network.NewVirtualNetworksClient(sub)
-		cl.Authorizer = impl.authorizer
+		impl.configureClient(&cl.BaseClient.Client)
 		cl.BaseURI = impl.env.ResourceManagerEndpoint
 		sc := network.NewSubnetsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		sc.Authorizer = impl.authorizer
+		impl.configureClient(&sc.BaseClient.Client)
 		it, err := cl.ListAllComplete(ctx)
 		if err != nil {
 			sendErr(ctx, genericError(sub, VirtualNetworkT, "ListAllComplete", err), ec)
@@ -1131,7 +1205,7 @@ func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg st
 	go func() {
 		defer close(c)
 		st := storagemgmt.NewAccountsClient(sub)
-		st.Authorizer = impl.authorizer
+		impl.configureClient(&st.BaseClient.Client)
 		st.BaseURI = impl.env.ResourceManagerEndpoint
 		//
 		// TODO: I believe this bug has been fixed.
@@ -1333,6 +1407,7 @@ func NewAzureAPI() (AzureAPI, error) {
 	api := &azureImpl{
 		doClassic:     false,
 		classicClient: nil,
+		sender:        nil,
 	}
 	var err error
 	if os.Getenv("AZURE_TENANT_ID") == "" {

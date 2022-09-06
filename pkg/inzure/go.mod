@@ -15,4 +15,5 @@ require (
 	github.com/satori/go.uuid v0.0.0-20180103174451-36e9d2ebbde5 // indirect
 	go.opencensus.io v0.20.0 // indirect
 	golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2
+	golang.org/x/net v0.0.0-20220906165146-f3363e06e74c
 )

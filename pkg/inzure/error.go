@@ -12,6 +12,10 @@ type AzureAPIError struct {
 	ResourceID ResourceID
 }
 
+func (e *AzureAPIError) Unwrap() error {
+	return e.Err
+}
+
 func (e *AzureAPIError) Error() string {
 	if e.Action == "" {
 		return fmt.Sprintf("AzureAPIError on resource %s: %s", e.ResourceID.RawID, e.Err)
