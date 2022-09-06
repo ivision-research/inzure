@@ -59,9 +59,19 @@ func (s *Subscription) GetAttackSurface() AttackSurface {
 	as := NewEmptyAttackSurface()
 	for _, rg := range s.ResourceGroups {
 		for _, wa := range rg.WebApps {
+
+			if wa.Enabled.False() {
+				continue
+			}
 			as.WebApps = append(as.WebApps, wa.DefaultHostname)
+
 			for _, f := range wa.Functions {
-				as.Functions = append(as.Functions, f.URL)
+				if f.IsDisabled.False() || f.IsDisabled.Unknown() {
+					canTrigger := f.CanHttpTrigger()
+					if canTrigger.Unknown() || canTrigger.True() {
+						as.Functions = append(as.Functions, f.URL)
+					}
+				}
 			}
 		}
 

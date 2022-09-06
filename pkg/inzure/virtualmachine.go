@@ -1,6 +1,8 @@
 package inzure
 
-import "github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-04-01/compute"
+import (
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
+)
 
 // VirtualMachine holds the data for a given Virtual Machine. note that this
 // type is intended to collect information about both new and classical VMs.
@@ -17,6 +19,7 @@ type VirtualMachine struct {
 	PrimaryNetworkInterface ResourceID
 	OsName                  string
 	OsVersion               string
+	CustomData              string
 	OsType                  OsType
 	Disks                   []VMDisk
 }
@@ -63,7 +66,7 @@ func NewEmptyVirtualMachine() *VirtualMachine {
 
 // WindowsRMListener is a listener for Windows VMs.
 type WindowsRMListener struct {
-	IsHTTPS        bool
+	IsHTTPS        UnknownBool
 	CertificateURL string
 }
 
@@ -73,121 +76,126 @@ type SSHPublicKey struct {
 	PublicKey string
 }
 
-func (v *VirtualMachine) FromAzure(az *compute.VirtualMachine) {
-	v.Meta.setupEmpty()
+func (vm *VirtualMachine) FromAzure(az *armcompute.VirtualMachine) {
+	vm.Meta.setupEmpty()
 	if az.ID != nil {
-		v.Meta.fromID(*az.ID)
+		vm.Meta.fromID(*az.ID)
 	}
-	props := az.VirtualMachineProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	if props.OsProfile != nil {
-		os := props.OsProfile
-		if os.ComputerName != nil {
-			v.ComputerName = *os.ComputerName
-		}
-		if os.AdminUsername != nil {
-			v.AdminUser = *os.AdminUsername
-		}
-		if os.WindowsConfiguration != nil {
 
-			v.OsType = OsTypeWindows
-
-			win := os.WindowsConfiguration
-			// TODO: I think this is always false..?
-			v.DisablePasswordAuth = BoolFalse
-			if win.EnableAutomaticUpdates != nil {
-				v.AutomaticUpdates = unknownFromBool(*win.EnableAutomaticUpdates)
-			}
-			if win.WinRM != nil && win.WinRM.Listeners != nil {
-				for _, rml := range *win.WinRM.Listeners {
-					var url string
-					if rml.CertificateURL != nil {
-						url = *rml.CertificateURL
-					}
-					v.WindowsRMListeners = append(
-						v.WindowsRMListeners,
-						WindowsRMListener{
-							IsHTTPS:        rml.Protocol == compute.HTTPS,
-							CertificateURL: url,
-						},
-					)
-				}
-			}
-		} else if os.LinuxConfiguration != nil {
-
-			v.OsType = OsTypeLinux
-
-			lin := os.LinuxConfiguration
-			if lin.DisablePasswordAuthentication != nil {
-				v.DisablePasswordAuth = unknownFromBool(*lin.DisablePasswordAuthentication)
-			}
-			if lin.SSH != nil && lin.SSH.PublicKeys != nil {
-				for _, pk := range *lin.SSH.PublicKeys {
-					var pubKey SSHPublicKey
-					if pk.Path != nil {
-						pubKey.Path = *pk.Path
-					}
-					if pk.KeyData != nil {
-						pubKey.PublicKey = *pk.KeyData
-					}
-					v.SSHKeys = append(v.SSHKeys, pubKey)
-				}
-			}
-		}
+	if props.OSProfile != nil {
+		vm.loadOSProfile(props.OSProfile)
 	}
 
 	if props.NetworkProfile != nil {
-		netp := props.NetworkProfile
-		if netp.NetworkInterfaces != nil {
-			for _, aziface := range *netp.NetworkInterfaces {
-				if aziface.ID != nil {
-					var ni NetworkInterface
-					ni.setupEmpty()
-					ni.Meta.fromID(*aziface.ID)
-					v.NetworkInterfaces = append(v.NetworkInterfaces, ni)
-					if aziface.NetworkInterfaceReferenceProperties != nil &&
-						aziface.NetworkInterfaceReferenceProperties.Primary != nil {
-						if *aziface.NetworkInterfaceReferenceProperties.Primary {
-							v.PrimaryNetworkInterface = ni.Meta
+		vm.loadNetworkProfile(props.NetworkProfile)
+	}
+
+	if props.InstanceView != nil {
+		vm.loadInstanceView(props.InstanceView)
+	}
+}
+func (vm *VirtualMachine) loadInstanceView(iv *armcompute.VirtualMachineInstanceView) {
+	gValFromPtr(&vm.OsName, iv.OSName)
+	gValFromPtr(&vm.OsVersion, iv.OSVersion)
+	if iv.Disks != nil {
+		for _, d := range iv.Disks {
+			if d.Name != nil {
+				disk := NewEmptyVMDisk()
+				disk.Name = *d.Name
+				if d.EncryptionSettings != nil {
+					for _, s := range d.EncryptionSettings {
+						var setting DiskEncryption
+						setting.Enabled.FromBoolPtr(s.Enabled)
+						if s.DiskEncryptionKey != nil {
+							gValFromPtr(&setting.EncryptionKey, s.DiskEncryptionKey.SecretURL)
 						}
+						if s.KeyEncryptionKey != nil {
+							gValFromPtr(&setting.KeyEncryptionKey, s.KeyEncryptionKey.KeyURL)
+						}
+						disk.EncryptionSettings = append(disk.EncryptionSettings, setting)
+					}
+				}
+				vm.Disks = append(vm.Disks, disk)
+			}
+		}
+	}
+
+}
+
+func (vm *VirtualMachine) loadNetworkProfile(netp *armcompute.NetworkProfile) {
+	if netp.NetworkInterfaces != nil {
+		for _, aziface := range netp.NetworkInterfaces {
+			if aziface.ID != nil {
+				var ni NetworkInterface
+				ni.setupEmpty()
+				ni.Meta.fromID(*aziface.ID)
+				vm.NetworkInterfaces = append(vm.NetworkInterfaces, ni)
+				props := aziface.Properties
+				if props != nil &&
+					props.Primary != nil {
+					if *props.Primary {
+						vm.PrimaryNetworkInterface = ni.Meta
 					}
 				}
 			}
 		}
 	}
+}
 
-	if props.InstanceView != nil {
-		iv := props.InstanceView
-		if iv.OsName != nil {
-			v.OsName = *iv.OsName
+func (vm *VirtualMachine) loadOSProfile(os *armcompute.OSProfile) {
+	gValFromPtr(&vm.ComputerName, os.ComputerName)
+	gValFromPtr(&vm.AdminUser, os.AdminUsername)
+	gValFromPtr(&vm.CustomData, os.CustomData)
+
+	if os.WindowsConfiguration != nil {
+
+		vm.OsType = OsTypeWindows
+
+		win := os.WindowsConfiguration
+		// TODO: I think this is always false..?
+		vm.DisablePasswordAuth = BoolFalse
+		if win.EnableAutomaticUpdates != nil {
+			vm.AutomaticUpdates = unknownFromBool(*win.EnableAutomaticUpdates)
 		}
-		if iv.OsVersion != nil {
-			v.OsVersion = *iv.OsVersion
-		}
-		if iv.Disks != nil {
-			for _, d := range *iv.Disks {
-				if d.Name != nil {
-					disk := NewEmptyVMDisk()
-					disk.Name = *d.Name
-					if d.EncryptionSettings != nil {
-						for _, s := range *d.EncryptionSettings {
-							var setting DiskEncryption
-							if s.Enabled != nil {
-								setting.Enabled = unknownFromBool(*s.Enabled)
-							}
-							if s.DiskEncryptionKey != nil && s.DiskEncryptionKey.SecretURL != nil {
-								setting.EncryptionKey = *s.DiskEncryptionKey.SecretURL
-							}
-							if s.KeyEncryptionKey != nil && s.KeyEncryptionKey.KeyURL != nil {
-								setting.KeyEncryptionKey = *s.KeyEncryptionKey.KeyURL
-							}
-							disk.EncryptionSettings = append(disk.EncryptionSettings, setting)
-						}
-					}
-					v.Disks = append(v.Disks, disk)
+		if win.WinRM != nil && win.WinRM.Listeners != nil {
+			for _, rml := range win.WinRM.Listeners {
+				var url string
+				if rml.CertificateURL != nil {
+					url = *rml.CertificateURL
 				}
+				isHttps := BoolUnknown
+				if rml.Protocol != nil {
+					isHttps = unknownFromBool(*rml.Protocol == armcompute.ProtocolTypesHTTPS)
+				}
+				vm.WindowsRMListeners = append(
+					vm.WindowsRMListeners,
+					WindowsRMListener{
+						IsHTTPS:        isHttps,
+						CertificateURL: url,
+					},
+				)
+			}
+		}
+	} else if os.LinuxConfiguration != nil {
+
+		vm.OsType = OsTypeLinux
+
+		lin := os.LinuxConfiguration
+		vm.DisablePasswordAuth.FromBoolPtr(lin.DisablePasswordAuthentication)
+		if lin.SSH != nil && lin.SSH.PublicKeys != nil {
+			for _, pk := range lin.SSH.PublicKeys {
+				var pubKey SSHPublicKey
+				if pk.Path != nil {
+					pubKey.Path = *pk.Path
+				}
+				if pk.KeyData != nil {
+					pubKey.PublicKey = *pk.KeyData
+				}
+				vm.SSHKeys = append(vm.SSHKeys, pubKey)
 			}
 		}
 	}

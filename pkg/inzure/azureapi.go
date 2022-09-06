@@ -2,37 +2,51 @@ package inzure
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
-	"regexp"
+	"sync"
+	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/advisor/mgmt/2017-04-19/advisor"
-	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
+	armcosmos "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-analytics/armdatalakeanalytics"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-store/armdatalakestore"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresql"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	"github.com/Azure/go-autorest/autorest/azure"
+
 	"github.com/Azure/azure-sdk-for-go/services/classic/management"
 	"github.com/Azure/azure-sdk-for-go/services/classic/management/storageservice"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-04-01/compute"
-	"github.com/Azure/azure-sdk-for-go/services/cosmos-db/mgmt/2015-04-08/documentdb"
-	lakeana "github.com/Azure/azure-sdk-for-go/services/datalake/analytics/mgmt/2016-11-01/account"
-	lakestore "github.com/Azure/azure-sdk-for-go/services/datalake/store/mgmt/2016-11-01/account"
-	"github.com/Azure/azure-sdk-for-go/services/keyvault/mgmt/2018-02-14/keyvault"
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network"
-	"github.com/Azure/azure-sdk-for-go/services/postgresql/mgmt/2017-12-01/postgresql"
-	sqldb "github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
-	"github.com/Azure/azure-sdk-for-go/services/redis/mgmt/2018-03-01/redis"
-	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2017-05-10/resources"
-	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-11-01/storage"
-	"github.com/Azure/azure-sdk-for-go/services/web/mgmt/2018-02-01/web"
-	"github.com/Azure/azure-sdk-for-go/storage"
-	"github.com/Azure/go-autorest/autorest"
-	"github.com/Azure/go-autorest/autorest/azure"
-	"github.com/Azure/go-autorest/autorest/azure/auth"
+
+	"golang.org/x/net/proxy"
 )
 
-const bufSize = 5
+const (
+	bufSize = 5
+
+	maxConnsPerHost    = 100
+	maxIdleConns       = 20
+	idleConnTimeoutSec = 5
+	minTLSVersion      = tls.VersionTLS12
+)
 
 // AzureAPI is an interface wrapper for the Azure API itself. Interaction with
 // the API only happens through this interface.
@@ -48,6 +62,23 @@ const bufSize = 5
 // To ignore direct usage of the API you can set up a Subscription to gather
 // the data you want and then pass it an API.
 type AzureAPI interface {
+	// SetProxy sets a custom proxy.Dialer for the client. Note that by default
+	// the HTTP_PROXY and HTTPS_PROXY environmental variables should be supported.
+	// This can also use proxy.Direct{} to completely bypass the proxy for some
+	// calls.
+	//
+	// Note that this can't be used in combination with `SetClient`
+	SetProxy(proxy proxy.Dialer)
+
+	// ClearProxy resets the proxy to the default configuration. The default proxy
+	// configuration supports the HTTP_PROXY and HTTPS_PROXY environmental
+	// variables.
+	ClearProxy()
+
+	// Setclient allows to completely customize the http.Client in use. Note that
+	// this can't be used in combination with `SetProxy`
+	SetClient(client *http.Client)
+
 	// GetResourceGroups gets all resource groups for the given subscription
 	// ResourceGroups are returned on the provided channel. They are empty
 	// except for basic identifying data. You can send those resource groups
@@ -61,7 +92,7 @@ type AzureAPI interface {
 	// VirtualMachines and NetworkInterfaces needs to come from the
 	// GetVirtualMachines method.
 	GetNetworks(ctx context.Context, sub string, ec chan<- error) <-chan *VirtualNetwork
-	// GetVirtualMachines gets the virtual machines on the subscription. The
+	// GetVirtualMachines gets the virtual machines in the subscription. The
 	// VirtualMachine data struct contains information about VM configurations
 	// as well as references to NetworkInterfaces. Note that these
 	// NetworkInterface structs only contain the ResourceID and need to be
@@ -85,11 +116,9 @@ type AzureAPI interface {
 	GetApplicationSecurityGroups(ctx context.Context, sub string, ec chan<- error) <-chan *ApplicationSecurityGroup
 	GetWebApps(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *WebApp
 	GetAPIs(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *APIService
-	GetStorageAccounts(ctx context.Context, sub string, rg string, lk bool, ec chan<- error) <-chan *StorageAccount
+	GetStorageAccounts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *StorageAccount
 	GetRedisServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *RedisServer
-	GetContainers(context.Context, *StorageAccount, chan<- error) <-chan *Container
 	GetKeyVaults(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *KeyVault
-	GetRecommendations(ctx context.Context, sub string, ec chan<- error) <-chan *Recommendation
 
 	// The following methods deal with classic accounts
 
@@ -104,15 +133,106 @@ type AzureAPI interface {
 
 // impl is the internal implementation of the AzureAPI.
 type azureImpl struct {
-	authorizer    autorest.Authorizer
-	env           azure.Environment
+	// TODO this should respect the proxy
 	classicClient management.Client
 	doClassic     bool
+
+	usingProxy      bool
+	tokenCredential azcore.TokenCredential
+	clientOptions   *arm.ClientOptions
+}
+
+func makeClientWithTransport(transport *http.Transport) *http.Client {
+	var roundTripper http.RoundTripper = transport
+	j, _ := cookiejar.New(nil)
+	return &http.Client{Jar: j, Transport: roundTripper}
+
+}
+
+func (impl *azureImpl) ClearProxy() {
+	if impl.usingProxy {
+		impl.usingProxy = false
+		impl.clientOptions.Transport = defaultClient
+	}
+}
+
+func makeDefaultTransport() *http.Transport {
+	tport := &http.Transport{
+		Proxy:             http.ProxyFromEnvironment,
+		ForceAttemptHTTP2: true,
+
+		MaxIdleConns:    maxIdleConns,
+		IdleConnTimeout: idleConnTimeoutSec * time.Second,
+		MaxConnsPerHost: maxConnsPerHost,
+
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: minTLSVersion,
+		},
+	}
+	return tport
+}
+
+func makeProxyTransport(dialer proxy.Dialer) *http.Transport {
+	tport := &http.Transport{
+		Proxy:             nil,
+		ForceAttemptHTTP2: true,
+
+		MaxIdleConns:    maxIdleConns,
+		IdleConnTimeout: idleConnTimeoutSec * time.Second,
+		MaxConnsPerHost: maxConnsPerHost,
+
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: minTLSVersion,
+		},
+	}
+
+	if v, is := dialer.(proxy.ContextDialer); is {
+		tport.DialContext = v.DialContext
+	}
+	tport.Dial = dialer.Dial
+	return tport
+}
+
+func (impl *azureImpl) SetClient(client *http.Client) {
+	impl.usingProxy = false
+	impl.clientOptions.Transport = client
+}
+
+func (impl *azureImpl) SetProxy(dialer proxy.Dialer) {
+	if dialer == nil {
+		impl.ClearProxy()
+		return
+	}
+	transport := makeProxyTransport(dialer)
+	httpClient := makeClientWithTransport(transport)
+	impl.clientOptions.Transport = httpClient
+}
+
+func getAzureEnv() (env azure.Environment, err error) {
+	envName := os.Getenv("AZURE_ENVIRONMENT")
+	if envName != "" {
+		env, err = azure.EnvironmentFromName(envName)
+		if err != nil {
+			return
+		}
+	} else {
+		env = azure.PublicCloud
+	}
+	return
 }
 
 func (impl *azureImpl) EnableClassic(key []byte, sub string) (err error) {
+	var env azure.Environment
+	env, err = getAzureEnv()
+	if err != nil {
+		return
+	}
 	config := management.DefaultConfig()
-	config.ManagementURL = impl.env.ServiceManagementEndpoint
+	config.ManagementURL = env.ServiceManagementEndpoint
 	impl.classicClient, err = management.NewClientFromConfig(sub, key, config)
 	if err == nil {
 		impl.doClassic = true
@@ -122,968 +242,1815 @@ func (impl *azureImpl) EnableClassic(key []byte, sub string) (err error) {
 	return
 }
 
-func sendErr(ctx context.Context, e error, ec chan<- error) {
+func sendChan[T any](ctx context.Context, it T, into chan<- T) bool {
 	select {
 	case <-ctx.Done():
-		return
-	case ec <- e:
+		return false
+	case into <- it:
+		return true
 	}
 }
 
-func (impl *azureImpl) GetResourceGroups(ctx context.Context, sub string, errChan chan<- error) <-chan *ResourceGroup {
-	c := make(chan *ResourceGroup, bufSize)
+var defaultClient = makeClientWithTransport(makeDefaultTransport())
+
+func sendErr(ctx context.Context, e error, ec chan<- error) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ec <- e:
+		return true
+	}
+}
+
+func genericErrorTransform(sub string, tag AzureResourceTag, action string) func(err error) error {
+	return func(err error) error {
+		return genericError(sub, tag, action, err)
+	}
+}
+
+func handlePagerWaitGroup[Iz any, Az any](
+	ctx context.Context,
+	getter func() (*runtime.Pager[Az], error),
+	handler func(Az, chan<- Iz) (bool, error),
+	errTransform func(error) error,
+	errChan chan<- error,
+	wg *sync.WaitGroup,
+) <-chan Iz {
+
+	c := make(chan Iz, bufSize)
+
+	var onError func(error)
+
+	if errTransform != nil {
+		onError = func(err error) {
+			sendErr(ctx, errTransform(err), errChan)
+		}
+	} else {
+		onError = func(err error) {
+			sendErr(ctx, err, errChan)
+		}
+	}
+
 	go func() {
-		groups := resources.NewGroupsClient(sub)
-		groups.Authorizer = impl.authorizer
-		groups.BaseURI = impl.env.ResourceManagerEndpoint
 		defer close(c)
-		it, err := groups.ListComplete(ctx, "", nil)
+
+		defer func() {
+			if wg != nil {
+				wg.Done()
+			}
+		}()
+
+		pager, err := getter()
 		if err != nil {
-			sendErr(ctx, resourceGroupError(sub, err), errChan)
+			onError(err)
 			return
 		}
-		for it.NotDone() {
-			rg := NewEmptyResourceGroup()
-			v := it.Value()
-			rg.FromAzure(&v)
-			select {
-			case <-ctx.Done():
+
+		for pager.More() {
+
+			res, err := pager.NextPage(ctx)
+
+			if err != nil {
+				onError(err)
 				return
-			case c <- rg:
 			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, resourceGroupError(sub, err), errChan)
+
+			alive, err := handler(res, c)
+
+			if !alive {
 				return
+			}
+
+			if err != nil {
+				onError(err)
+				return
+			}
+
+		}
+
+	}()
+
+	return c
+
+}
+
+func handlePager[Iz any, Az any](
+	ctx context.Context,
+	getter func() (*runtime.Pager[Az], error),
+	handler func(Az, chan<- Iz) (bool, error),
+	errTransform func(error) error,
+	errChan chan<- error,
+) <-chan Iz {
+	return handlePagerWaitGroup(ctx, getter, handler, errTransform, errChan, nil)
+}
+
+func (impl *azureImpl) GetResourceGroups(ctx context.Context, sub string, ec chan<- error) <-chan *ResourceGroup {
+	client, err := armresources.NewResourceGroupsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ResourceGroupT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armresources.ResourceGroupsClientListResponse], error) {
+		return client.NewListPager(nil), nil
+	}
+
+	handler := func(az armresources.ResourceGroupsClientListResponse, out chan<- *ResourceGroup) (bool, error) {
+		for _, rg := range az.Value {
+			it := NewEmptyResourceGroup()
+			it.FromAzure(rg)
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ResourceGroupT, "ListResourceGroups"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *APIService {
-	// TODO: We can use a sync.WaitGroup and some other concurrency stuff to
-	// make this much more async. Right now this actually takes a noticable
-	// amount of time longer than other things.
-	c := make(chan *APIService, bufSize)
-	go func() {
-		defer close(c)
-		innerCtx, innerCancel := context.WithCancel(ctx)
+	client, err := armapimanagement.NewServiceClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiServiceT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
 
-		defer innerCancel()
+	getter := func() (*runtime.Pager[armapimanagement.ServiceClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
 
-		rd := func(responder autorest.Responder) autorest.Responder {
-			return autorest.ResponderFunc(func(r *http.Response) error {
-				if r.StatusCode == 502 {
-					innerCancel()
-				}
-				return responder.Respond(r)
-			})
+	handler := func(
+		az armapimanagement.ServiceClientListByResourceGroupResponse,
+		out chan<- *APIService,
+	) (bool, error) {
+
+		var wg sync.WaitGroup
+
+		for _, v := range az.Value {
+			it := NewEmptyAPIService()
+			it.FromAzure(v)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.fillAPIService(ctx, it, out, ec)
+			}()
 		}
 
-		bc := apimanagement.NewBackendClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		bc.Authorizer = impl.authorizer
-		bc.ResponseInspector = rd
-		ac := apimanagement.NewAPIClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		ac.Authorizer = impl.authorizer
-		ac.ResponseInspector = rd
-		oc := apimanagement.NewAPIOperationClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		oc.Authorizer = impl.authorizer
-		oc.ResponseInspector = rd
-		pc := apimanagement.NewProductClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		pc.Authorizer = impl.authorizer
-		pc.ResponseInspector = rd
-		sc := apimanagement.NewServiceClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		sc.Authorizer = impl.authorizer
-		sc.ResponseInspector = rd
-		schc := apimanagement.NewAPISchemaClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		schc.Authorizer = impl.authorizer
-		schc.ResponseInspector = rd
-		pss := apimanagement.NewSignUpSettingsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		pss.Authorizer = impl.authorizer
-		pss.ResponseInspector = rd
-		uc := apimanagement.NewUserClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		uc.Authorizer = impl.authorizer
-		uc.ResponseInspector = rd
-		it, err := sc.ListByResourceGroupComplete(innerCtx, rg)
-		if err != nil {
-			sendErr(innerCtx, genericError(sub, ApiT, "ListAPIServices", err), ec)
-			return
-		}
+		wg.Wait()
 
-		for it.NotDone() {
-			s := it.Value()
-			if s.Name == nil {
-				sendErr(
-					innerCtx, genericError(
-						sub, ApiServiceT, "ListAPIServices",
-						errors.New("service had no name"),
-					), ec,
-				)
-				continue
-			}
-			service := NewEmptyAPIService()
-			service.FromAzure(&s)
-			prodIt, err := pc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil, nil)
-			if err != nil {
-				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListByServiceComplete", err), ec)
-			} else {
-				for prodIt.NotDone() {
-					prod := NewEmptyAPIServiceProduct()
-					azProd := prodIt.Value()
-					prod.FromAzure(&azProd)
-					service.Products = append(service.Products, prod)
-					if err := prodIt.Next(); err != nil {
-						sendErr(innerCtx, genericError(sub, ApiT, "ProductIterator.Next", err), ec)
-						break
-					}
-				}
-			}
+		return true, nil
+	}
 
-			usersIt, err := uc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil)
-			if err != nil {
-				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListUsers", err), ec)
-			} else {
-				for usersIt.NotDone() {
-					azUser := usersIt.Value()
-					user := NewAPIServiceUser()
-					user.FromAzure(&azUser)
-					service.Users = append(service.Users, user)
-					if err := usersIt.Next(); err != nil {
-						sendErr(innerCtx, genericError(sub, ApiServiceT, "UserIterator.Next", err), ec)
-						break
-					}
-				}
-			}
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiServiceT, "ListServices"),
+		ec,
+	)
 
-			portSign, err := pss.Get(innerCtx, rg, *s.Name)
-			if err != nil {
-				sendErr(innerCtx, genericError(sub, ApiServiceT, "GetPortalSignupSettings", err), ec)
-			} else {
-				service.addSignupSettingsFromAzure(&portSign)
-			}
-
-			beIt, err := bc.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil)
-			if err != nil {
-				sendErr(innerCtx, genericError(sub, ApiBackendT, "ListByServiceComplete", err), ec)
-			} else {
-				for beIt.NotDone() {
-					be := NewEmptyAPIBackend()
-					azBe := beIt.Value()
-					be.FromAzure(&azBe)
-					service.Backends = append(service.Backends, be)
-					if err := beIt.Next(); err != nil {
-						sendErr(innerCtx, genericError(sub, ApiBackendT, "Iterator.Next", err), ec)
-						break
-					}
-				}
-			}
-			apiIt, err := ac.ListByServiceComplete(innerCtx, rg, *s.Name, "", nil, nil, nil)
-			if err != nil {
-				sendErr(innerCtx, genericError(sub, ApiServiceT, "ListAPIs", err), ec)
-				return
-			}
-			for apiIt.NotDone() {
-				api := NewEmptyAPI()
-				azApi := apiIt.Value()
-				api.FromAzure(&azApi)
-				if azApi.ID == nil {
-					sendErr(innerCtx, genericError(sub,
-						ApiT, "ListAPIs",
-						errors.New("api had no ID"),
-					), ec)
-					continue
-				}
-				opIt, err := oc.ListByAPIComplete(innerCtx, rg, *s.Name, api.Meta.Name, "", nil, nil)
-				if err != nil {
-					sendErr(innerCtx, genericError(sub, ApiOperationT, "ListByAPIComplete", err), ec)
-				} else {
-					for opIt.NotDone() {
-						op := NewEmptyAPIOperation()
-						azOp := opIt.Value()
-						op.FromAzure(&azOp)
-						api.Operations = append(api.Operations, op)
-						if err := opIt.Next(); err != nil {
-							sendErr(innerCtx, genericError(sub, ApiOperationT, "OperationIterator.Next", err), ec)
-							break
-						}
-					}
-				}
-				schIt, err := schc.ListByAPIComplete(innerCtx, rg, *s.Name, api.Meta.Name)
-				if err != nil {
-					sendErr(innerCtx, genericError(sub, ApiSchemaT, "ListByAPIComplete", err), ec)
-				} else {
-					for schIt.NotDone() {
-						schema := NewEmptyAPISchema()
-						azSchema := schIt.Value()
-						schema.FromAzure(&azSchema)
-						api.Schemas = append(api.Schemas, schema)
-						if err := schIt.Next(); err != nil {
-							sendErr(innerCtx, genericError(sub, ApiSchemaT, "SchemaIterator.Next", err), ec)
-							break
-						}
-					}
-				}
-				service.APIs = append(service.APIs, api)
-				if err := apiIt.Next(); err != nil {
-					sendErr(innerCtx, genericError(sub, ApiT, "ApiIterator.Next", err), ec)
-					break
-				}
-			}
-			select {
-			case c <- service:
-			case <-innerCtx.Done():
-				return
-			}
-			if err := it.Next(); err != nil {
-				sendErr(innerCtx, genericError(sub, ApiT, "ServiceIterator.Next", err), ec)
-				break
-			}
-		}
-	}()
-	return c
 }
 
-func (impl *azureImpl) GetRecommendations(ctx context.Context, sub string, ec chan<- error) <-chan *Recommendation {
-	c := make(chan *Recommendation, bufSize)
-	go func() {
-		cl := advisor.NewRecommendationsClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		defer close(c)
-		it, err := cl.ListComplete(ctx, "", nil, "")
-		if err != nil {
-			sendErr(ctx, genericError(sub, RecommendationT, "ListComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			rec := NewEmptyRecommendation()
-			v := it.Value()
-			rec.FromAzure(&v)
-			// We only care about Security recommendations.
-			if rec.Category == RecommendationCategorySecurity {
-				select {
-				case <-ctx.Done():
-					return
-				case c <- rec:
-				}
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, RecommendationT, "GetNextValue", err), ec)
-				return
-			}
+func chanToSlicePtrs[T any](into *[]T, from <-chan *T, wg *sync.WaitGroup) {
+	defer func() {
+		if wg != nil {
+			wg.Done()
 		}
 	}()
-	return c
+	for e := range from {
+		*into = append(*into, *e)
+	}
+}
+
+func chanToSlice[T any](into *[]T, from <-chan T, wg *sync.WaitGroup) {
+	defer func() {
+		if wg != nil {
+			wg.Done()
+		}
+	}()
+	for e := range from {
+		*into = append(*into, e)
+	}
+}
+
+func (impl *azureImpl) fillAPI(ctx context.Context, api *API, svc string, out chan<- *API, ec chan<- error) {
+
+	var wg sync.WaitGroup
+
+	sub := api.Meta.Subscription
+	rg := api.Meta.ResourceGroupName
+	apiName := api.Meta.Name
+
+	ops := impl.getAPIOperations(ctx, sub, rg, svc, apiName, ec)
+	wg.Add(1)
+	go chanToSlice(&api.Operations, ops, &wg)
+
+	schemas := impl.getAPISchemas(ctx, sub, rg, svc, apiName, ec)
+	wg.Add(1)
+	go chanToSlice(&api.Schemas, schemas, &wg)
+
+	wg.Wait()
+
+	sendChan(ctx, api, out)
+}
+
+func (impl *azureImpl) fillAPIService(ctx context.Context, api *APIService, out chan<- *APIService, ec chan<- error) {
+
+	var wg sync.WaitGroup
+
+	sub := api.Meta.Subscription
+	rg := api.Meta.ResourceGroupName
+	svc := api.Meta.Name
+
+	apis := impl.getAPIServiceAPIs(ctx, sub, rg, svc, ec)
+	wg.Add(1)
+	go chanToSlice(&api.APIs, apis, &wg)
+
+	backends := impl.getAPIServiceBackends(ctx, sub, rg, svc, ec)
+	wg.Add(1)
+	go chanToSlice(&api.Backends, backends, &wg)
+
+	products := impl.getAPIServiceProducts(ctx, sub, rg, svc, ec)
+	wg.Add(1)
+	go chanToSlice(&api.Products, products, &wg)
+
+	wg.Add(1)
+	go impl.getAPIServiceSignupSettings(ctx, api, ec, &wg)
+
+	users := impl.getAPIServiceUsers(ctx, sub, rg, svc, ec)
+	wg.Add(1)
+	go chanToSlice(&api.Users, users, &wg)
+
+	wg.Wait()
+
+	sendChan(ctx, api, out)
+}
+func (impl *azureImpl) getAPIServiceSignupSettings(ctx context.Context, api *APIService, ec chan<- error, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	sub := api.Meta.Subscription
+	client, err := armapimanagement.NewSignUpSettingsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetSignupSettingsClient", err),
+			ec,
+		)
+		return
+	}
+
+	res, err := client.Get(ctx, api.Meta.ResourceGroupName, api.Meta.Name, nil)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetSignupSettings", err),
+			ec,
+		)
+		return
+	}
+	api.setSignupSettingsFromAzure(&res.PortalSignupSettings)
+}
+
+func (impl *azureImpl) getAPIServiceAPIs(ctx context.Context, sub string, rg string, svc string, ec chan<- error) <-chan *API {
+	client, err := armapimanagement.NewAPIClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetAPIsClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.APIClientListByServiceResponse], error) {
+		return client.NewListByServicePager(rg, svc, nil), nil
+	}
+
+	handler := func(az armapimanagement.APIClientListByServiceResponse, out chan<- *API) (bool, error) {
+		var wg sync.WaitGroup
+		for _, v := range az.Value {
+			it := NewEmptyAPI()
+			it.FromAzure(v)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.fillAPI(ctx, it, svc, out, ec)
+			}()
+		}
+
+		wg.Wait()
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListAPIs"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getAPIOperations(ctx context.Context, sub string, rg string, svc string, api string, ec chan<- error) <-chan *APIOperation {
+	client, err := armapimanagement.NewAPIOperationClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetAPIOperationsClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.APIOperationClientListByAPIResponse], error) {
+		return client.NewListByAPIPager(rg, svc, api, nil), nil
+	}
+
+	handler := func(az armapimanagement.APIOperationClientListByAPIResponse, out chan<- *APIOperation) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptyAPIOperation()
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListAPIOperations"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getAPISchemas(ctx context.Context, sub string, rg string, svc string, api string, ec chan<- error) <-chan *APISchema {
+	client, err := armapimanagement.NewAPISchemaClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetAPISchemasClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.APISchemaClientListByAPIResponse], error) {
+		return client.NewListByAPIPager(rg, svc, api, nil), nil
+	}
+
+	handler := func(az armapimanagement.APISchemaClientListByAPIResponse, out chan<- *APISchema) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptyAPISchema()
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListAPISchemas"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getAPIServiceBackends(ctx context.Context, sub string, rg string, svc string, ec chan<- error) <-chan *APIBackend {
+	client, err := armapimanagement.NewBackendClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetBackendsClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.BackendClientListByServiceResponse], error) {
+		return client.NewListByServicePager(rg, svc, nil), nil
+	}
+
+	handler := func(az armapimanagement.BackendClientListByServiceResponse, out chan<- *APIBackend) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptyAPIBackend()
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListBackends"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getAPIServiceUsers(ctx context.Context, sub string, rg string, svc string, ec chan<- error) <-chan *APIServiceUser {
+	client, err := armapimanagement.NewUserClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetUsersClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.UserClientListByServiceResponse], error) {
+		return client.NewListByServicePager(rg, svc, nil), nil
+	}
+
+	handler := func(az armapimanagement.UserClientListByServiceResponse, out chan<- *APIServiceUser) (bool, error) {
+		for _, v := range az.Value {
+			it := NewAPIServiceUser()
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListUsers"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getAPIServiceProducts(ctx context.Context, sub string, rg string, svc string, ec chan<- error) <-chan *APIServiceProduct {
+
+	client, err := armapimanagement.NewProductClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApiT, "GetProductsClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armapimanagement.ProductClientListByServiceResponse], error) {
+		return client.NewListByServicePager(rg, svc, nil), nil
+	}
+
+	handler := func(az armapimanagement.ProductClientListByServiceResponse, out chan<- *APIServiceProduct) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptyAPIServiceProduct()
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListProducts"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetDataLakeAnalytics(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *DataLakeAnalytics {
-	c := make(chan *DataLakeAnalytics, bufSize)
-	go func() {
-		defer close(c)
-		cl := lakeana.NewAccountsClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListByResourceGroupComplete(ctx, rg, "", nil, nil, "", "", nil)
-		if err != nil {
-			sendErr(ctx, genericError(sub, DataLakeT, "ListByResourceGroupComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			v := it.Value()
-			if v.Name != nil {
-				acc, err := cl.Get(ctx, rg, *v.Name)
-				if err != nil {
-					sendErr(ctx, genericError(sub, DataLakeT, "GetDataLakeAnalytics", err), ec)
-				} else {
-					dl := NewEmptyDataLakeAnalytics()
-					dl.FromAzure(&acc)
-					select {
-					case <-ctx.Done():
-						return
-					case c <- dl:
-					}
-				}
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, DataLakeT, "GetNextValue", err), ec)
-				break
-			}
-		}
-	}()
-	return c
-}
-
-func (impl *azureImpl) GetKeyVaults(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *KeyVault {
-	c := make(chan *KeyVault, bufSize)
-	go func() {
-		defer close(c)
-		cl := keyvault.NewVaultsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		cl.Authorizer = impl.authorizer
-		it, err := cl.ListByResourceGroupComplete(ctx, rg, nil)
-		if err != nil {
-			sendErr(ctx, genericError(sub, KeyVaultT, "ListByResourceGroupComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			aKv := it.Value()
-			kv := NewEmptyKeyVault()
-			kv.FromAzure(&aKv)
-			select {
-			case <-ctx.Done():
-				return
-			case c <- kv:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, KeyVaultT, "GetNextValue", err), ec)
-				break
-			}
-		}
-	}()
-	return c
-}
-
-func (impl *azureImpl) GetCosmosDBs(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *CosmosDB {
-	c := make(chan *CosmosDB, bufSize)
-	go func() {
-		defer close(c)
-		cl := documentdb.NewDatabaseAccountsClientWithBaseURI(
-			impl.env.ResourceManagerEndpoint, sub,
+	client, err := armdatalakeanalytics.NewAccountsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, DataLakeT, "GetAnalyticsClient", err),
+			ec,
 		)
-		cl.Authorizer = impl.authorizer
-		ret, err := cl.ListByResourceGroup(ctx, rg)
-		if err != nil {
-			sendErr(ctx, genericError(sub, CosmosDBT, "ListByResourceGroup", err), ec)
-			return
-		}
-		if ret.Value == nil {
-			return
-		}
-		for _, az := range *ret.Value {
-			db := NewEmptyCosmosDB()
-			db.FromAzure(&az)
-			select {
-			case <-ctx.Done():
-				return
-			case c <- db:
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armdatalakeanalytics.AccountsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armdatalakeanalytics.AccountsClientListByResourceGroupResponse, out chan<- *DataLakeAnalytics) (bool, error) {
+		var wg sync.WaitGroup
+		for _, accnt := range az.Value {
+			accntName := accnt.Name
+			if accntName == nil {
+				continue
 			}
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.getDataLakeAnalyticsAccount(ctx, client, sub, rg, *accntName, out, ec)
+			}()
+
 		}
-	}()
-	return c
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, DataLakeT, "ListAnalyticsAccounts"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetDataLakeStores(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *DataLakeStore {
-	c := make(chan *DataLakeStore, bufSize)
-	go func() {
-		defer close(c)
-		cl := lakestore.NewAccountsClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListByResourceGroupComplete(ctx, rg, "", nil, nil, "", "", nil)
-		if err != nil {
-			sendErr(ctx, genericError(sub, DataLakeT, "ListByResourceGroupComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			v := it.Value()
-			if v.Name != nil {
-				acc, err := cl.Get(ctx, rg, *v.Name)
-				if err != nil {
-					ec <- genericError(sub, DataLakeT, "GetDataLakeStore", err)
-				} else {
-					dl := NewEmptyDataLakeStore()
-					dl.FromAzure(&acc)
-					select {
-					case <-ctx.Done():
-						return
-					case c <- dl:
-					}
-				}
+	client, err := armdatalakestore.NewAccountsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, DataLakeT, "GetStoreClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armdatalakestore.AccountsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armdatalakestore.AccountsClientListByResourceGroupResponse, out chan<- *DataLakeStore) (bool, error) {
+		var wg sync.WaitGroup
+		for _, accnt := range az.Value {
+			accntName := accnt.Name
+			if accntName == nil {
+				continue
 			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, DataLakeT, "GetNextValue", err), ec)
-				break
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.getDataLakeStoreAccount(ctx, client, sub, rg, *accntName, out, ec)
+			}()
+
+		}
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, DataLakeT, "ListStoreAccounts"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getDataLakeStoreAccount(ctx context.Context, client *armdatalakestore.AccountsClient, sub string, rg string, accnt string, out chan<- *DataLakeStore, ec chan<- error) {
+	res, err := client.Get(ctx, rg, accnt, nil)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, DataLakeT, "GetStoreAccount", err),
+			ec,
+		)
+		return
+	}
+
+	it := NewEmptyDataLakeStore()
+	it.FromAzure(&res.Account)
+	if !sendChan(ctx, it, out) {
+		return
+	}
+
+}
+
+func (impl *azureImpl) getDataLakeAnalyticsAccount(ctx context.Context, client *armdatalakeanalytics.AccountsClient, sub string, rg string, accnt string, out chan<- *DataLakeAnalytics, ec chan<- error) {
+	res, err := client.Get(ctx, rg, accnt, nil)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, DataLakeT, "GetAnalyticsAccount", err),
+			ec,
+		)
+		return
+	}
+
+	it := NewEmptyDataLakeAnalytics()
+	it.FromAzure(&res.Account)
+	if !sendChan(ctx, it, out) {
+		return
+	}
+
+}
+
+func (impl *azureImpl) GetCosmosDBs(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *CosmosDB {
+	client, err := armcosmos.NewDatabaseAccountsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, CosmosDBT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armcosmos.DatabaseAccountsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armcosmos.DatabaseAccountsClientListByResourceGroupResponse, out chan<- *CosmosDB) (bool, error) {
+		for _, db := range az.Value {
+			it := NewEmptyCosmosDB()
+			it.FromAzure(db)
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, CosmosDBT, "ListCosmosDB"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetSQLServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *SQLServer {
-	c := make(chan *SQLServer, bufSize)
-	go func() {
-		defer close(c)
-		cl := sqldb.NewServersClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl := sqldb.NewDatabasesClient(sub)
-		dbCl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl.Authorizer = impl.authorizer
-		fwCl := sqldb.NewFirewallRulesClient(sub)
-		fwCl.Authorizer = impl.authorizer
-		fwCl.BaseURI = impl.env.ResourceManagerEndpoint
-		vnrCl := sqldb.NewVirtualNetworkRulesClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		vnrCl.Authorizer = impl.authorizer
-		it, err := cl.ListByResourceGroupComplete(ctx, rg)
-		if err != nil {
-			sendErr(ctx, genericError(sub, SQLServerT, "ListByResourceGroupComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			v := it.Value()
-			s := NewEmptySQLServer()
-			s.FromAzure(&v)
-			fwVals, err := fwCl.ListByServer(ctx, rg, s.Meta.Name)
-			if err == nil && fwVals.Value != nil {
-				s.Firewall = FirewallRules(make([]FirewallRule, 0, len(*fwVals.Value)))
-				for _, fw := range *fwVals.Value {
-					var nfw FirewallRule
-					nfw.FromAzureSQL(&fw)
-					s.Firewall = append(s.Firewall, nfw)
-				}
-			}
-			dbs, err := dbCl.ListByServer(ctx, rg, s.Meta.Name, "transparentDataEncryption", "")
-			if err == nil && dbs.Value != nil {
-				s.Databases = make([]*SQLDatabase, len(*dbs.Value))
-				for i, v := range *dbs.Value {
-					ndb := new(SQLDatabase)
-					ndb.FromAzure(&v)
-					s.Databases[i] = ndb
-				}
-			}
+	client, err := armsql.NewServersClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, SQLServerT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
 
-			vnrIt, err := vnrCl.ListByServerComplete(ctx, rg, s.Meta.Name)
-			if err == nil {
-				for vnrIt.NotDone() {
-					az := vnrIt.Value()
-					s.addVNetRule(&az)
-					if err := vnrIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, SQLServerT, "ListVNetRules", err), ec)
-						break
-					}
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case c <- s:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, SQLServerT, "GetNextValue", err), ec)
-				break
-			}
+	getter := func() (*runtime.Pager[armsql.ServersClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(
+		az armsql.ServersClientListByResourceGroupResponse,
+		out chan<- *SQLServer,
+	) (bool, error) {
+
+		var wg sync.WaitGroup
+
+		for _, srv := range az.Value {
+			it := NewEmptySQLServer()
+			it.FromAzure(srv)
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				impl.fillSQLServer(ctx, it, out, ec)
+			}()
 		}
-	}()
-	return c
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, SQLServerT, "ListServers"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetPostgresServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *PostgresServer {
-	c := make(chan *PostgresServer, bufSize)
-	go func() {
-		defer close(c)
-		cl := postgresql.NewServersClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl := postgresql.NewDatabasesClient(sub)
-		dbCl.BaseURI = impl.env.ResourceManagerEndpoint
-		dbCl.Authorizer = impl.authorizer
-		fwCl := postgresql.NewFirewallRulesClient(sub)
-		fwCl.Authorizer = impl.authorizer
-		fwCl.BaseURI = impl.env.ResourceManagerEndpoint
-		vnrCl := postgresql.NewVirtualNetworkRulesClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		vnrCl.Authorizer = impl.authorizer
-		ret, err := cl.ListByResourceGroup(ctx, rg)
-		if err != nil {
-			sendErr(ctx, genericError(sub, PostgresServerT, "ListByResourceGroupComplete", err), ec)
-			return
-		}
-		if ret.Value == nil {
-			return
-		}
-		for _, v := range *ret.Value {
-			s := NewEmptyPostgresServer()
-			s.FromAzure(&v)
-			fwVals, err := fwCl.ListByServer(ctx, rg, s.Meta.Name)
-			if err == nil && fwVals.Value != nil {
-				s.Firewall = FirewallRules(make([]FirewallRule, 0, len(*fwVals.Value)))
-				for _, fw := range *fwVals.Value {
-					var nfw FirewallRule
-					nfw.FromAzurePostgres(&fw)
-					s.Firewall = append(s.Firewall, nfw)
-				}
-			}
-			dbs, err := dbCl.ListByServer(ctx, rg, s.Meta.Name)
-			if err == nil && dbs.Value != nil {
-				s.Databases = make([]PostgresDB, len(*dbs.Value))
-				for i, v := range *dbs.Value {
-					s.Databases[i].FromAzure(&v)
-				}
-			}
+	client, err := armpostgresql.NewServersClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, PostgresServerT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
 
-			vnrIt, err := vnrCl.ListByServerComplete(ctx, rg, s.Meta.Name)
-			if err == nil {
-				for vnrIt.NotDone() {
-					az := vnrIt.Value()
-					s.addVNetRule(&az)
-					if err := vnrIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, PostgresServerT, "ListVNetRules", err), ec)
-						break
-					}
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case c <- s:
-			}
+	getter := func() (*runtime.Pager[armpostgresql.ServersClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(
+		az armpostgresql.ServersClientListByResourceGroupResponse,
+		out chan<- *PostgresServer,
+	) (bool, error) {
+
+		var wg sync.WaitGroup
+
+		for _, srv := range az.Value {
+			it := NewEmptyPostgresServer()
+			it.FromAzure(srv)
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				impl.fillPostgresServer(ctx, it, out, ec)
+			}()
+		}
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, PostgresServerT, "ListServers"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) fillSQLServer(ctx context.Context, srv *SQLServer, out chan<- *SQLServer, ec chan<- error) {
+	var wg sync.WaitGroup
+
+	sub := srv.Meta.Subscription
+	rg := srv.Meta.ResourceGroupName
+	name := srv.Meta.Name
+
+	databases := impl.getSQLDatabases(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go chanToSlice(&srv.Databases, databases, &wg)
+
+	fwRules := impl.getSQLFirewallRules(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for fwr := range fwRules {
+			srv.Firewall = append(srv.Firewall, *fwr)
 		}
 	}()
-	return c
+
+	subnets := impl.getSQLVirtualNetworkRules(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go chanToSlicePtrs(&srv.Subnets, subnets, &wg)
+
+	wg.Wait()
+
+	sendChan(ctx, srv, out)
+}
+
+func (impl *azureImpl) getSQLFirewallRules(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *FirewallRule {
+	client, err := armsql.NewFirewallRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, SQLServerT, "GetFirewallRulesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armsql.FirewallRulesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armsql.FirewallRulesClientListByServerResponse, out chan<- *FirewallRule) (bool, error) {
+		for _, v := range az.Value {
+			it := new(FirewallRule)
+			it.FromAzureSQL(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, SQLServerT, "ListFirewallRules"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getSQLVirtualNetworkRules(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *ResourceID {
+	client, err := armsql.NewVirtualNetworkRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, SQLServerT, "GetVirtualNetworkRulesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armsql.VirtualNetworkRulesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armsql.VirtualNetworkRulesClientListByServerResponse, out chan<- *ResourceID) (bool, error) {
+		for _, v := range az.Value {
+			props := v.Properties
+			if props == nil || props.VirtualNetworkSubnetID == nil {
+				continue
+			}
+			it := new(ResourceID)
+			it.fromID(*props.VirtualNetworkSubnetID)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, SQLServerT, "ListVirtualNetworkRules"),
+		ec,
+	)
+
+}
+func (impl *azureImpl) getSQLDatabaseEncrypted(ctx context.Context, client *armsql.TransparentDataEncryptionsClient, sub string, rg string, srv string, db string, ec chan<- error) UnknownBool {
+
+	getter := func() (*runtime.Pager[armsql.TransparentDataEncryptionsClientListByDatabaseResponse], error) {
+		return client.NewListByDatabasePager(rg, srv, db, nil), nil
+	}
+
+	handler := func(az armsql.TransparentDataEncryptionsClientListByDatabaseResponse, out chan<- UnknownBool) (bool, error) {
+		for _, v := range az.Value {
+			props := v.Properties
+			if props == nil || props.State == nil {
+				if !sendChan(ctx, BoolUnknown, out) {
+					return false, nil
+				}
+				continue
+			}
+			enabled := unknownFromBool(*props.State == armsql.TransparentDataEncryptionStateEnabled)
+			if !sendChan(ctx, enabled, out) {
+				return false, nil
+			}
+			if enabled.True() {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	results := handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, SQLServerT, "GetDatabaseEncryption"),
+		ec,
+	)
+
+	hadUncertainty := false
+
+	for r := range results {
+		if r.True() {
+			return r
+		} else if r.Unknown() {
+			hadUncertainty = true
+		}
+	}
+	if hadUncertainty {
+		return BoolUnknown
+	}
+	return BoolFalse
+
+}
+
+func (impl *azureImpl) getSQLDatabases(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *SQLDatabase {
+	client, err := armsql.NewDatabasesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, SQLServerT, "GetDatabasesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	dataEnc, err := armsql.NewTransparentDataEncryptionsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, SQLServerT, "GetDatabaseEncryptionClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armsql.DatabasesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armsql.DatabasesClientListByServerResponse, out chan<- *SQLDatabase) (bool, error) {
+		for _, v := range az.Value {
+			it := new(SQLDatabase)
+			it.FromAzure(v)
+
+			it.Encrypted = impl.getSQLDatabaseEncrypted(ctx, dataEnc, sub, rg, srv, it.Meta.Name, ec)
+
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, SQLServerT, "ListDatabases"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) fillPostgresServer(ctx context.Context, srv *PostgresServer, out chan<- *PostgresServer, ec chan<- error) {
+	var wg sync.WaitGroup
+
+	sub := srv.Meta.Subscription
+	rg := srv.Meta.ResourceGroupName
+	name := srv.Meta.Name
+
+	databases := impl.getPostgresDatabases(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go chanToSlicePtrs(&srv.Databases, databases, &wg)
+
+	fwRules := impl.getPostgresFirewallRules(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for fwr := range fwRules {
+			srv.Firewall = append(srv.Firewall, *fwr)
+		}
+	}()
+
+	subnets := impl.getPostgresVirtualNetworkRules(ctx, sub, rg, name, ec)
+	wg.Add(1)
+	go chanToSlicePtrs(&srv.Subnets, subnets, &wg)
+
+	wg.Wait()
+
+	sendChan(ctx, srv, out)
+}
+
+func (impl *azureImpl) getPostgresFirewallRules(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *FirewallRule {
+	client, err := armpostgresql.NewFirewallRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, PostgresServerT, "GetFirewallRulesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armpostgresql.FirewallRulesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armpostgresql.FirewallRulesClientListByServerResponse, out chan<- *FirewallRule) (bool, error) {
+		for _, v := range az.Value {
+			it := new(FirewallRule)
+			it.FromAzurePostgres(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, PostgresServerT, "ListFirewallRules"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getPostgresVirtualNetworkRules(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *ResourceID {
+	client, err := armpostgresql.NewVirtualNetworkRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, PostgresServerT, "GetVirtualNetworkRulesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armpostgresql.VirtualNetworkRulesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armpostgresql.VirtualNetworkRulesClientListByServerResponse, out chan<- *ResourceID) (bool, error) {
+		for _, v := range az.Value {
+			props := v.Properties
+			if props == nil || props.VirtualNetworkSubnetID == nil {
+				continue
+			}
+			it := new(ResourceID)
+			it.fromID(*props.VirtualNetworkSubnetID)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, PostgresServerT, "ListVirtualNetworkRules"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getPostgresDatabases(ctx context.Context, sub string, rg string, srv string, ec chan<- error) <-chan *PostgresDB {
+	client, err := armpostgresql.NewDatabasesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, PostgresServerT, "GetDatabasesClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armpostgresql.DatabasesClientListByServerResponse], error) {
+		return client.NewListByServerPager(rg, srv, nil), nil
+	}
+
+	handler := func(az armpostgresql.DatabasesClientListByServerResponse, out chan<- *PostgresDB) (bool, error) {
+		for _, v := range az.Value {
+			it := new(PostgresDB)
+			it.FromAzure(v)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, PostgresServerT, "ListDatabases"),
+		ec,
+	)
+
 }
 
 func (impl *azureImpl) GetNetworkInterfaces(ctx context.Context, sub string, ec chan<- error) <-chan *NetworkInterface {
-	c := make(chan *NetworkInterface, bufSize)
-	go func() {
-		defer close(c)
-		cl := network.NewInterfacesClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		ipCl := network.NewPublicIPAddressesClient(sub)
-		ipCl.Authorizer = impl.authorizer
-		ipCl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListAllComplete(ctx)
-		if err != nil {
-			sendErr(ctx, genericError(sub, NetworkInterfaceT, "ListAllComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			iface := NewEmptyNetworkInterface()
-			v := it.Value()
-			iface.FromAzure(&v)
-			for i := range iface.IPConfigurations {
-				ipc := &iface.IPConfigurations[i]
-				if ipc.PublicIP.Meta.Tag != ResourceUnsetT && (ipc.PublicIP.IP == "" || ipc.PublicIP.FQDN == "") {
-					pub := &ipc.PublicIP
-					res, err := ipCl.Get(ctx, pub.Meta.ResourceGroupName, pub.Meta.Name, "")
+	client, err := armnetwork.NewInterfacesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, NetworkInterfaceT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	ipClient, err := armnetwork.NewPublicIPAddressesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, NetworkInterfaceT, "GetPublicIPClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.InterfacesClientListAllResponse], error) {
+		return client.NewListAllPager(nil), nil
+	}
+
+	handler := func(az armnetwork.InterfacesClientListAllResponse, out chan<- *NetworkInterface) (bool, error) {
+		var wg sync.WaitGroup
+		for _, iface := range az.Value {
+			it := NewEmptyNetworkInterface()
+			it.FromAzure(iface)
+
+			for i := range it.IPConfigurations {
+				conf := &it.IPConfigurations[i]
+				if conf.PublicIP.Meta.Tag != ResourceUnsetT && (conf.PublicIP.IP == "" || conf.PublicIP.FQDN == "") {
+					pub := &conf.PublicIP
+					res, err := ipClient.Get(ctx, pub.Meta.ResourceGroupName, pub.Meta.Name, nil)
 					if err != nil {
 						sendErr(ctx, genericError(sub, PublicIPT, "Get", err), ec)
 						continue
 					}
-					pub.FromAzure(&res)
+					pub.FromAzure(&res.PublicIPAddress)
 				}
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case c <- iface:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, NetworkInterfaceT, "GetNextResult", err), ec)
-				return
+
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		wg.Wait()
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, NetworkInterfaceT, "ListInterfaces"),
+		ec,
+	)
+
+}
+
+func wrapPager[Original any, New any](orig *runtime.Pager[Original], transform func(Original) New, nextLink func(New) *string) *runtime.Pager[New] {
+	return runtime.NewPager(
+		runtime.PagingHandler[New]{
+			More: func(res New) bool {
+				link := nextLink(res)
+				return link != nil && len(*link) != 0
+			},
+			Fetcher: func(ctx context.Context, ptr *New) (New, error) {
+				nextPage, err := orig.NextPage(ctx)
+				return transform(nextPage), err
+			},
+		},
+	)
+
 }
 
 func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *LoadBalancer {
-	c := make(chan *LoadBalancer, bufSize)
-	go func() {
-		defer close(c)
-		cl := network.NewLoadBalancersClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		pipcl := network.NewPublicIPAddressesClientWithBaseURI(
-			impl.env.ResourceManagerEndpoint,
-			sub,
+	client, err := armnetwork.NewLoadBalancersClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, LoadBalancerT, "GetClient", err),
+			ec,
 		)
-		pipcl.Authorizer = impl.authorizer
-		ipccl := network.NewInterfaceIPConfigurationsClientWithBaseURI(
-			impl.env.ResourceManagerEndpoint,
-			sub,
-		)
-		ipccl.Authorizer = impl.authorizer
-		rulescl := network.NewLoadBalancerLoadBalancingRulesClientWithBaseURI(
-			impl.env.ResourceManagerEndpoint,
-			sub,
-		)
-		rulescl.Authorizer = impl.authorizer
-		icl := network.NewInterfacesClientWithBaseURI(
-			impl.env.ResourceManagerEndpoint,
-			sub,
-		)
-		icl.Authorizer = impl.authorizer
-		var it network.LoadBalancerListResultIterator
-		var err error
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.LoadBalancerListResult], error) {
 		if rg == "" {
-			it, err = cl.ListAllComplete(ctx)
+			base := client.NewListAllPager(nil)
+			return wrapPager(base,
+				func(in armnetwork.LoadBalancersClientListAllResponse) armnetwork.LoadBalancerListResult {
+					return in.LoadBalancerListResult
+				},
+				func(page armnetwork.LoadBalancerListResult) *string { return page.NextLink },
+			), nil
 		} else {
-			it, err = cl.ListComplete(ctx, rg)
+			base := client.NewListPager(rg, nil)
+			return wrapPager(base,
+				func(in armnetwork.LoadBalancersClientListResponse) armnetwork.LoadBalancerListResult {
+					return in.LoadBalancerListResult
+				},
+				func(page armnetwork.LoadBalancerListResult) *string { return page.NextLink },
+			), nil
 		}
+	}
+
+	handler := func(
+		az armnetwork.LoadBalancerListResult,
+		out chan<- *LoadBalancer,
+	) (bool, error) {
+
+		var wg sync.WaitGroup
+
+		for _, v := range az.Value {
+			it := NewEmptyLoadBalancer()
+			it.FromAzure(v)
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				impl.fillLoadBalancer(ctx, it, out, ec)
+			}()
+		}
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, LoadBalancerT, "ListServices"),
+		ec,
+	)
+}
+
+func (impl *azureImpl) fillLoadBalancer(ctx context.Context, lb *LoadBalancer, out chan<- *LoadBalancer, ec chan<- error) {
+
+	var wg sync.WaitGroup
+
+	sub := lb.Meta.Subscription
+	rg := lb.Meta.ResourceGroupName
+	name := lb.Meta.Name
+
+	wg.Add(1)
+	go func() { defer wg.Done(); impl.getLoadBalancerFrontendIPs(ctx, sub, rg, name, lb, ec) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); impl.getLoadBalancerBackendIPs(ctx, sub, rg, name, lb, ec) }()
+	wg.Add(1)
+	go func() { defer wg.Done(); impl.getLoadBalancerRules(ctx, sub, rg, name, lb, ec) }()
+
+	wg.Wait()
+
+	sendChan(ctx, lb, out)
+}
+
+func (impl *azureImpl) getLoadBalancerRules(ctx context.Context, sub string, rg string, name string, lb *LoadBalancer, ec chan<- error) {
+	client, err := armnetwork.NewLoadBalancerLoadBalancingRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, LoadBalancerT, "GetLoadBalancingRulesClient", err),
+			ec,
+		)
+		return
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.LoadBalancerLoadBalancingRulesClientListResponse], error) {
+		return client.NewListPager(rg, name, nil), nil
+	}
+
+	handler := func(az armnetwork.LoadBalancerLoadBalancingRulesClientListResponse, out chan<- *armnetwork.LoadBalancingRule) (bool, error) {
+		for _, rule := range az.Value {
+			if !sendChan(ctx, rule, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	for rule := range handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, LoadBalancerT, "ListRules"),
+		ec,
+	) {
+		lb.AddLoadBalancerRule(rule)
+	}
+
+}
+
+func (impl *azureImpl) getLoadBalancerBackendIPs(ctx context.Context, sub string, rg string, name string, lb *LoadBalancer, ec chan<- error) {
+	ipConfigClient, err := armnetwork.NewInterfaceIPConfigurationsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, LoadBalancerT, "GetBackendIPClient[IPConfigs]", err),
+			ec,
+		)
+		return
+	}
+
+	ifaceClient, err := armnetwork.NewInterfacesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, LoadBalancerT, "GetBackendIPClient[IFace]", err),
+			ec,
+		)
+		return
+	}
+
+	getBackendVMSS := func(id ResourceID, vmss string, iface string, into *IPConfiguration) {
+
+		idx := id.ExtractValueForTag("virtualmachines", true)
+		name := id.ExtractValueForTag("ipconfigurations", true)
+
+		res, err := ifaceClient.GetVirtualMachineScaleSetIPConfiguration(
+			ctx, id.ResourceGroupName, vmss, idx, iface, name, nil)
 		if err != nil {
-			sendErr(ctx, genericError(sub, LoadBalancerT, "ListComplete", err), ec)
+			sendErr(
+				ctx, genericError(
+					sub, LoadBalancerT,
+					"GetIPForBackend", err,
+				), ec,
+			)
 			return
 		}
-		for it.NotDone() {
-			lb := NewEmptyLoadBalancer()
-			azLb := it.Value()
-			lb.FromAzure(&azLb)
-			for i := range lb.FrontendIPs {
-				fipc := &lb.FrontendIPs[i]
-				// We may need to grab the public IP information here
-				if fipc.PublicIP.Meta.RawID != "" && fipc.PublicIP.IP == "" {
-					pip, err := pipcl.Get(
-						ctx, fipc.PublicIP.Meta.ResourceGroupName,
-						fipc.PublicIP.Meta.Name,
-						"",
-					)
-					if err != nil {
-						sendErr(
-							ctx, genericError(
-								sub, LoadBalancerT,
-								"GetPublicIP", err,
-							), ec,
-						)
-					} else {
-						fipc.PublicIP.FromAzure(&pip)
-					}
-				}
-			}
-			getBackendVMSS := func(id ResourceID, vmss string, iface string, into *IPConfiguration) {
+		into.FromAzure(&res.InterfaceIPConfiguration)
+	}
 
-				idx := id.ExtractValueForTag("virtualmachines", true)
-				name := id.ExtractValueForTag("ipconfigurations", true)
-				azIpc, err := icl.GetVirtualMachineScaleSetIPConfiguration(
-					ctx, id.ResourceGroupName, vmss, idx, iface, name, "")
-				if err != nil {
+	getBackendRegularInterface := func(id ResourceID, iface string, into *IPConfiguration) {
+		res, err := ipConfigClient.Get(
+			ctx, id.ResourceGroupName,
+			iface, id.Name, nil,
+		)
+		if err != nil {
+			sendErr(
+				ctx, genericError(
+					sub, LoadBalancerT,
+					"GetIPForBackend", err,
+				), ec,
+			)
+			return
+		}
+		into.FromAzure(&res.InterfaceIPConfiguration)
+	}
+
+	for i := range lb.Backends {
+		for j := range lb.Backends[i].IPConfigurations {
+
+			ipc := &lb.Backends[i].IPConfigurations[j]
+
+			// If both IPs are empty and we have a raw id, it is just a
+			// reference
+			if ipc.Meta.RawID != "" && (ipc.PrivateIP == "" && ipc.PublicIP.IP == "") {
+
+				vmss := ipc.Meta.ExtractValueForTag("virtualmachinescalesets", true)
+				iface := ipc.Meta.ExtractValueForTag("networkinterfaces", true)
+
+				if vmss != "" {
+					getBackendVMSS(ipc.Meta, vmss, iface, ipc)
+				} else if iface != "" {
+					getBackendRegularInterface(ipc.Meta, iface, ipc)
+				} else {
 					sendErr(
 						ctx, genericError(
 							sub, LoadBalancerT,
-							"GetIPForBackend", err,
+							"GetIPForBackend",
+							fmt.Errorf(
+								"couldn't find interface for %s", ipc,
+							),
 						), ec,
 					)
-					return
 				}
-				into.FromAzure(&azIpc)
-			}
-			getBackendRegularInterface := func(id ResourceID, iface string, into *IPConfiguration) {
-				azIpc, err := ipccl.Get(
-					ctx, id.ResourceGroupName,
-					iface, id.Name,
-				)
-				if err != nil {
-					sendErr(
-						ctx, genericError(
-							sub, LoadBalancerT,
-							"GetIPForBackend", err,
-						), ec,
-					)
-					return
-				}
-				into.FromAzure(&azIpc)
-			}
-			// We'll need to also look through the backend ipconfigurations
-			// since they are probably just references
-			for i := range lb.Backends {
-				for j := range lb.Backends[i].IPConfigurations {
-					ipc := &lb.Backends[i].IPConfigurations[j]
-					// If both IPs are empty and we have a raw id, it is just a
-					// reference
-					if ipc.Meta.RawID != "" && (ipc.PrivateIP == "" && ipc.PublicIP.IP == "") {
-						vmss := ipc.Meta.ExtractValueForTag("virtualmachinescalesets", true)
-						iface := ipc.Meta.ExtractValueForTag("networkinterfaces", true)
-						if vmss != "" {
-							getBackendVMSS(ipc.Meta, vmss, iface, ipc)
-						} else if iface != "" {
-							getBackendRegularInterface(ipc.Meta, iface, ipc)
-						} else {
-							sendErr(
-								ctx, genericError(
-									sub, LoadBalancerT,
-									"GetIPForBackend",
-									fmt.Errorf(
-										"couldn't find interface for %s", ipc,
-									),
-								), ec,
-							)
-						}
-					}
-				}
-			}
-
-			rules, err := rulescl.ListComplete(ctx, lb.Meta.ResourceGroupName, lb.Meta.Name)
-			if err != nil {
-				sendErr(ctx, genericError(sub, LoadBalancerT, "ListRulesComplete", err), ec)
-			} else {
-				for rules.NotDone() {
-
-					azRule := rules.Value()
-
-					lb.AddLoadBalancerRule(&azRule)
-
-					err = rules.NextWithContext(ctx)
-					if err != nil {
-						sendErr(ctx, genericError(sub, LoadBalancerT, "GetNextRule", err), ec)
-						break
-					}
-				}
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case c <- lb:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, LoadBalancerT, "GetNextResult", err), ec)
-				return
 			}
 		}
-	}()
-	return c
+	}
+
+}
+
+func (impl *azureImpl) getLoadBalancerFrontendIPs(ctx context.Context, sub string, rg string, name string, lb *LoadBalancer, ec chan<- error) {
+	client, err := armnetwork.NewPublicIPAddressesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, LoadBalancerT, "GetFrontendIPs", err),
+			ec,
+		)
+		return
+	}
+
+	for i := range lb.FrontendIPs {
+		fip := &lb.FrontendIPs[i]
+		// We may need to grab the public IP information here
+		if fip.PublicIP.Meta.RawID != "" && fip.PublicIP.IP == "" {
+			res, err := client.Get(
+				ctx, fip.PublicIP.Meta.ResourceGroupName,
+				fip.PublicIP.Meta.Name, nil,
+			)
+			if err != nil {
+				sendErr(
+					ctx, genericError(
+						sub, LoadBalancerT,
+						"GetPublicIP", err,
+					), ec,
+				)
+			} else {
+				fip.PublicIP.FromAzure(&res.PublicIPAddress)
+			}
+		}
+	}
+
 }
 
 func (impl *azureImpl) GetVirtualMachines(ctx context.Context, sub string, ec chan<- error) <-chan *VirtualMachine {
-	c := make(chan *VirtualMachine, bufSize)
-	go func() {
-		defer close(c)
-		cl := compute.NewVirtualMachinesClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListAllComplete(ctx)
-		if err != nil {
-			sendErr(ctx, genericError(sub, VirtualMachineT, "ListAllComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			vm := NewEmptyVirtualMachine()
-			v := it.Value()
-			vm.FromAzure(&v)
-			select {
-			case <-ctx.Done():
-				return
-			case c <- vm:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, VirtualMachineT, "GetNextResult", err), ec)
-				return
+	client, err := armcompute.NewVirtualMachinesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, VirtualMachineT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armcompute.VirtualMachinesClientListAllResponse], error) {
+		return client.NewListAllPager(nil), nil
+	}
+
+	handler := func(az armcompute.VirtualMachinesClientListAllResponse, out chan<- *VirtualMachine) (bool, error) {
+		for _, vm := range az.Value {
+			it := NewEmptyVirtualMachine()
+			it.FromAzure(vm)
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, VirtualMachineT, "ListVirtualMachines"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) GetKeyVaults(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *KeyVault {
+	client, err := armkeyvault.NewVaultsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, KeyVaultT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armkeyvault.VaultsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armkeyvault.VaultsClientListByResourceGroupResponse, out chan<- *KeyVault) (bool, error) {
+		for _, kv := range az.Value {
+			it := NewEmptyKeyVault()
+			it.FromAzure(kv)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, KeyVaultT, "ListKeyVaults"),
+		ec,
+	)
 }
 
 func (impl *azureImpl) GetWebApps(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *WebApp {
-	c := make(chan *WebApp, bufSize)
-	go func() {
-		defer close(c)
-		cl := web.NewAppsClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		includeSlots := true
-		it, err := cl.ListByResourceGroup(ctx, rg, &includeSlots)
-		if err != nil {
-			sendErr(ctx, genericError(sub, WebAppT, "ListByResourceGroup", err), ec)
-			return
-		}
-		for it.NotDone() {
-			values := it.Values()
-			if values == nil {
-				sendErr(ctx, genericError(sub, WebAppT, "GetPageValues", errors.New("empty page")), ec)
+	client, err := armappservice.NewWebAppsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, WebAppT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armappservice.WebAppsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armappservice.WebAppsClientListByResourceGroupResponse, out chan<- *WebApp) (bool, error) {
+		var wg sync.WaitGroup
+		for _, azwa := range az.Value {
+			if azwa == nil {
 				continue
 			}
-			for _, v := range values {
-				wa := NewEmptyWebApp()
-				wa.FromAzure(&v)
-				r, err := cl.GetConfiguration(ctx, rg, wa.Meta.Name)
-				if err != nil {
-					sendErr(ctx, genericError(sub, WebAppT, "GetConfiguration", err), ec)
-				} else {
-					wa.fillConfigInfo(r.SiteConfig)
-				}
-				funcIt, err := cl.ListFunctionsComplete(ctx, rg, wa.Meta.Name)
-				if err != nil {
-					sendErr(ctx, genericError(sub, WebAppT, "ListFunctions", err), ec)
-				} else {
-					for funcIt.NotDone() {
-						v := funcIt.Value()
-						f := NewEmptyFunction()
-						f.FromAzure(&v)
-						wa.Functions = append(wa.Functions, f)
-						if err := funcIt.Next(); err != nil {
-							sendErr(ctx, genericError(sub, WebAppT, "GetNextFunction", err), ec)
-							break
-						}
-					}
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case c <- wa:
-				}
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, WebAppT, "GetNextResult", err), ec)
-				return
-			}
+			it := NewEmptyWebApp()
+			it.FromAzure(azwa)
+
+			wg.Add(1)
+			go impl.getWebAppFunctions(ctx, client, it, out, ec, &wg)
 		}
-	}()
-	return c
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, StorageAccountT, "ListStorageAccounts"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) getWebAppFunctions(ctx context.Context, client *armappservice.WebAppsClient, wa *WebApp, out chan<- *WebApp, ec chan<- error, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	getter := func() (*runtime.Pager[armappservice.WebAppsClientListFunctionsResponse], error) {
+		return client.NewListFunctionsPager(wa.Meta.ResourceGroupName, wa.Meta.Name, nil), nil
+	}
+
+	handler := func(az armappservice.WebAppsClientListFunctionsResponse, handlerOut chan<- *Function) (bool, error) {
+		for _, azf := range az.Value {
+			if azf == nil {
+				continue
+			}
+			it := NewEmptyFunction()
+			it.FromAzure(azf)
+			if !sendChan(ctx, it, handlerOut) {
+				return false, nil
+			}
+
+		}
+
+		return true, nil
+	}
+
+	funcs := handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(wa.Meta.Subscription, FunctionT, "ListFunctions"),
+		ec,
+	)
+
+	for f := range funcs {
+		wa.Functions = append(wa.Functions, *f)
+	}
+
+	sendChan(ctx, wa, out)
 }
 
 func (impl *azureImpl) GetRedisServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *RedisServer {
-	c := make(chan *RedisServer, bufSize)
-	go func() {
-		defer close(c)
-		cl := redis.NewClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		fcl := redis.NewFirewallRulesClient(sub)
-		fcl.Authorizer = impl.authorizer
-		fcl.BaseURI = impl.env.ResourceManagerEndpoint
+	client, err := armredis.NewClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, RedisServerT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
 
-		it, err := cl.ListByResourceGroupComplete(ctx, rg)
-		if err != nil {
-			sendErr(ctx, genericError(sub, RedisServerT, "ListByResourceGroupComplete", err), ec)
-			return
+	fwClient, err := armredis.NewFirewallRulesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, RedisServerT, "GetFWClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armredis.ClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armredis.ClientListByResourceGroupResponse, out chan<- *RedisServer) (bool, error) {
+		var wg sync.WaitGroup
+		for _, rs := range az.Value {
+			it := NewEmptyRedisServer()
+			it.FromAzure(rs)
+
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+				impl.getRedisServerFirewall(ctx, fwClient, sub, rg, it.Meta.Name, it, out, ec)
+			}()
+
+			wg.Wait()
+
 		}
-		for it.NotDone() {
-			v := it.Value()
-			rs := NewEmptyRedisServer()
-			rs.FromAzure(&v)
-			fwIt, err := fcl.ListByRedisResourceComplete(ctx, rg, rs.Meta.Name)
-			if err == nil {
-				for fwIt.NotDone() {
-					v := fwIt.Value()
-					var fw FirewallRule
-					fw.FromAzureRedis(&v)
-					rs.Firewall = append(rs.Firewall, fw)
-					if err := fwIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, RedisServerT, "GetNextFirewallRule", err), ec)
-						break
-					}
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case c <- rs:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, RedisServerT, "GetNextResult", err), ec)
-				return
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, RedisServerT, "ListRediss"),
+		ec,
+	)
+}
+
+func (impl *azureImpl) getRedisServerFirewall(ctx context.Context, client *armredis.FirewallRulesClient, sub string, rg string, serverName string, server *RedisServer, out chan<- *RedisServer, ec chan<- error) {
+
+	getter := func() (*runtime.Pager[armredis.FirewallRulesClientListResponse], error) {
+		return client.NewListPager(rg, serverName, nil), nil
+	}
+
+	handler := func(az armredis.FirewallRulesClientListResponse, out chan<- *FirewallRule) (bool, error) {
+		for _, v := range az.Value {
+			fw := new(FirewallRule)
+			fw.FromAzureRedis(v)
+			if !sendChan(ctx, fw, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	firewalls := handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApiT, "ListProducts"),
+		ec,
+	)
+
+	for rule := range firewalls {
+		server.Firewall = append(server.Firewall, *rule)
+	}
+
+	sendChan(ctx, server, out)
 }
 
 func (impl *azureImpl) GetApplicationSecurityGroups(ctx context.Context, sub string, ec chan<- error) <-chan *ApplicationSecurityGroup {
-	c := make(chan *ApplicationSecurityGroup, bufSize)
-	go func() {
-		defer close(c)
-		asgcl := network.NewApplicationSecurityGroupsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		asgcl.Authorizer = impl.authorizer
-		it, err := asgcl.ListAllComplete(ctx)
-		if err != nil {
-			sendErr(ctx, genericError(sub, ApplicationSecurityGroupT, "ListAllComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			asg := NewEmptyASG()
-			v := it.Value()
-			asg.FromAzure(&v)
-			select {
-			case <-ctx.Done():
-				return
-			case c <- asg:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, ApplicationSecurityGroupT, "GetNextResult", err), ec)
-				return
-			}
+	client, err := armnetwork.NewApplicationSecurityGroupsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, ApplicationSecurityGroupT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
 
+	getter := func() (*runtime.Pager[armnetwork.ApplicationSecurityGroupsClientListAllResponse], error) {
+		return client.NewListAllPager(nil), nil
+	}
+
+	handler := func(az armnetwork.ApplicationSecurityGroupsClientListAllResponse, out chan<- *ApplicationSecurityGroup) (bool, error) {
+		for _, asg := range az.Value {
+			it := NewEmptyASG()
+			it.FromAzure(asg)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, ApplicationSecurityGroupT, "ListApplicationSecurityGroups"),
+		ec,
+	)
 }
 
 func (impl *azureImpl) GetNetworkSecurityGroups(ctx context.Context, sub string, ec chan<- error) <-chan *NetworkSecurityGroup {
-	c := make(chan *NetworkSecurityGroup, bufSize)
-	go func() {
-		defer close(c)
-		cl := network.NewSecurityGroupsClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		it, err := cl.ListAllComplete(ctx)
-		if err != nil {
-			sendErr(ctx, genericError(sub, NetworkSecurityGroupT, "ListAllComplete", err), ec)
-			return
-		}
-		for it.NotDone() {
-			nsg := NewEmptyNSG()
-			v := it.Value()
-			nsg.FromAzure(&v)
-			select {
-			case <-ctx.Done():
-				return
-			case c <- nsg:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, NetworkSecurityGroupT, "GetNextResult", err), ec)
-				return
+	client, err := armnetwork.NewSecurityGroupsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, NetworkSecurityGroupT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.SecurityGroupsClientListAllResponse], error) {
+		return client.NewListAllPager(nil), nil
+	}
+
+	handler := func(az armnetwork.SecurityGroupsClientListAllResponse, out chan<- *NetworkSecurityGroup) (bool, error) {
+		for _, nsg := range az.Value {
+			it := NewEmptyNSG()
+			it.FromAzure(nsg)
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, NetworkSecurityGroupT, "ListNetworkSecurityGroups"),
+		ec,
+	)
 }
 
-// TODO: Peering
 func (impl *azureImpl) GetNetworks(ctx context.Context, sub string, ec chan<- error) <-chan *VirtualNetwork {
-	c := make(chan *VirtualNetwork, bufSize)
-	go func() {
-		defer close(c)
-		cl := network.NewVirtualNetworksClient(sub)
-		cl.Authorizer = impl.authorizer
-		cl.BaseURI = impl.env.ResourceManagerEndpoint
-		sc := network.NewSubnetsClientWithBaseURI(impl.env.ResourceManagerEndpoint, sub)
-		sc.Authorizer = impl.authorizer
-		it, err := cl.ListAllComplete(ctx)
-		if err != nil {
-			sendErr(ctx, genericError(sub, VirtualNetworkT, "ListAllComplete", err), ec)
-			return
+	client, err := armnetwork.NewVirtualNetworksClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, VirtualNetworkT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.VirtualNetworksClientListAllResponse], error) {
+		return client.NewListAllPager(nil), nil
+	}
+
+	handler := func(az armnetwork.VirtualNetworksClientListAllResponse, out chan<- *VirtualNetwork) (bool, error) {
+		var wg sync.WaitGroup
+		for _, vn := range az.Value {
+			it := NewEmptyVirtualNetwork()
+			it.FromAzure(vn)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.fillVirtualNetwork(ctx, it, out, ec)
+			}()
 		}
-		for it.NotDone() {
-			vn := NewEmptyVirtualNetwork()
-			v := it.Value()
-			vn.FromAzure(&v)
-			sIt, err := sc.ListComplete(ctx, vn.Meta.ResourceGroupName, vn.Meta.Name)
-			if err == nil {
-				for sIt.NotDone() {
-					var snet Subnet
-					snet.setupEmpty()
-					azSubnet := sIt.Value()
-					snet.FromAzure(&azSubnet)
-					vn.Subnets = append(vn.Subnets, snet)
-					if err := sIt.Next(); err != nil {
-						sendErr(ctx, genericError(sub, SubnetT, "Iterator.Next", err), ec)
-						break
-					}
-				}
-			} else {
-				sendErr(ctx, genericError(sub, SubnetT, "ListComplete", err), ec)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case c <- vn:
-			}
-			if err := it.Next(); err != nil {
-				sendErr(ctx, genericError(sub, NetworkSecurityGroupT, "GetNextResult", err), ec)
-				return
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, VirtualNetworkT, "ListNetworkVirtualNetworks"),
+		ec,
+	)
+
+}
+
+func (impl *azureImpl) fillVirtualNetwork(ctx context.Context, vn *VirtualNetwork, out chan<- *VirtualNetwork, ec chan<- error) {
+
+	var wg sync.WaitGroup
+
+	sub := vn.Meta.Subscription
+	rg := vn.Meta.ResourceGroupName
+	name := vn.Meta.Name
+
+	wg.Add(1)
+	subnets := impl.getVirtualNetworkSubnets(ctx, sub, rg, name, ec)
+	chanToSlicePtrs(&vn.Subnets, subnets, &wg)
+
+	wg.Wait()
+
+	sendChan(ctx, vn, out)
+}
+
+func (impl *azureImpl) getVirtualNetworkSubnets(ctx context.Context, sub string, rg string, name string, ec chan<- error) <-chan *Subnet {
+	client, err := armnetwork.NewSubnetsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, VirtualNetworkT, "GetSubnetsClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.SubnetsClientListResponse], error) {
+		return client.NewListPager(rg, name, nil), nil
+	}
+
+	handler := func(az armnetwork.SubnetsClientListResponse, out chan<- *Subnet) (bool, error) {
+		for _, v := range az.Value {
+			it := new(Subnet)
+			it.setupEmpty()
+			it.FromAzure(v)
+
+			if !sendChan(ctx, it, out) {
+				return false, nil
 			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, VirtualNetworkT, "ListSubnets"),
+		ec,
+	)
 }
 
 func (impl *azureImpl) GetClassicStorageAccounts(ctx context.Context, ec chan<- error) <-chan *StorageAccount {
@@ -1102,7 +2069,7 @@ func (impl *azureImpl) GetClassicStorageAccounts(ctx context.Context, ec chan<- 
 			return
 		}
 		for _, s := range res.StorageServices {
-			sa := new(StorageAccount)
+			sa := NewEmptyStorageAccount()
 			sa.FromAzureClassic(&s)
 			keyRes, err := sc.GetStorageServiceKeys(sa.Meta.Name)
 			if err != nil {
@@ -1125,180 +2092,190 @@ func (impl *azureImpl) GetClassicStorageAccounts(ctx context.Context, ec chan<- 
 	return c
 }
 
-func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg string, lk bool, ec chan<- error) <-chan *StorageAccount {
-	c := make(chan *StorageAccount, bufSize)
+func (impl *azureImpl) GetStorageAccounts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *StorageAccount {
+	client, err := armstorage.NewAccountsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, StorageAccountT, "GetClient", err),
+			ec,
+		)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armstorage.AccountsClientListByResourceGroupResponse], error) {
+		return client.NewListByResourceGroupPager(rg, nil), nil
+	}
+
+	handler := func(az armstorage.AccountsClientListByResourceGroupResponse, out chan<- *StorageAccount) (bool, error) {
+		var wg sync.WaitGroup
+		for _, azsa := range az.Value {
+			if azsa == nil {
+				continue
+			}
+			it := NewEmptyStorageAccount()
+			it.FromAzure(azsa)
+			wg.Add(1)
+			go impl.getStorageAccountElements(ctx, it, out, ec, &wg)
+		}
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx,
+		getter,
+		handler,
+		genericErrorTransform(sub, StorageAccountT, "ListStorageAccounts"),
+		ec,
+	)
+}
+
+func (impl *azureImpl) getStorageAccountElements(ctx context.Context, sa *StorageAccount, out chan<- *StorageAccount, ec chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	var innerWg sync.WaitGroup
+	innerWg.Add(2)
 
 	go func() {
-		defer close(c)
-		st := storagemgmt.NewAccountsClient(sub)
-		st.Authorizer = impl.authorizer
-		st.BaseURI = impl.env.ResourceManagerEndpoint
-		//
-		// TODO: I believe this bug has been fixed.
-		//
-		// There is a bug in Azure in which the CustomDomain.useSubDomainName
-		// field is coming in as a string but is a bool in the struct itself.
-		// This works around that error by allowing us to try to recover later.
-		st.ResponseInspector = autorest.RespondDecorator(
-			func(r autorest.Responder) autorest.Responder {
-				return autorest.ResponderFunc(func(resp *http.Response) error {
-					err := r.Respond(resp)
-					if err == nil && resp != nil && resp.Body != nil {
-						buf := newByteBuffer()
-						_, err = io.Copy(buf, resp.Body)
-						if err != nil {
-							return err
-						}
-						resp.Body.Close()
-						resp.Body = buf
-					}
-					return err
-				})
-			},
+		defer innerWg.Done()
+		for container := range impl.getContainers(ctx, sa, ec) {
+			sa.Containers = append(sa.Containers, *container)
+		}
+	}()
+
+	go func() {
+		defer innerWg.Done()
+		for fs := range impl.getFileShares(ctx, sa, ec) {
+			sa.FileShares = append(sa.FileShares, *fs)
+		}
+	}()
+
+	innerWg.Wait()
+
+	sendChan(ctx, sa, out)
+}
+
+func (impl *azureImpl) getFileShares(ctx context.Context, sa *StorageAccount, ec chan<- error) <-chan *FileShare {
+	sub := sa.Meta.Subscription
+	client, err := armstorage.NewFileSharesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(
+			ctx,
+			genericError(sub, FileShareT, "GetClient", err),
+			ec,
 		)
 
-		handleValue := func(v *[]storagemgmt.Account) {
-			for _, accnt := range *v {
-				sa := new(StorageAccount)
-				sa.FromAzure(accnt)
-				id := sa.Meta
-				if lk {
-					lkr, err := st.ListKeys(ctx, id.ResourceGroupName, id.Name)
-					if err != nil {
-						er := simpleActionError(id, "ListKeys", err)
-						sendErr(ctx, er, ec)
-					} else if lkr.Keys != nil {
-						key := ""
-						for _, k := range *lkr.Keys {
-							if k.Value != nil {
-								key = *k.Value
-							}
-						}
-						if key == "" {
-							select {
-							case <-ctx.Done():
-								return
-							case c <- sa:
-							}
-							continue
-						}
-						sa.key = key
-					}
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case c <- sa:
-				}
-			}
-		}
+		return nil
+	}
+	getter := func() (*runtime.Pager[armstorage.FileSharesClientListResponse], error) {
+		return client.NewListPager(sa.Meta.ResourceGroupName, sa.Meta.Name, nil), nil
+	}
 
-		l, err := st.ListByResourceGroup(ctx, rg)
-		if err != nil {
-			// This is where we try to recover from the unmarshal error
-			// mentioned above. This isn't a perfect solution, but the
-			// idea here is to check if we got data and a 200 OK and
-			// to try the unmarshl again after replacing quoted bools with
-			// actual bools.
-			res := l.Response.Response
-			if res != nil {
-				buf, _ := l.Response.Response.Body.(*byteBuffer)
-				if res.StatusCode == http.StatusOK && buf.Len() > 0 {
-					fre, _ := regexp.Compile(`"false"`)
-					tre, _ := regexp.Compile(`"true"`)
-					buf = newByteBufferFromBytes(
-						tre.ReplaceAll(
-							fre.ReplaceAll(
-								buf.buf,
-								[]byte("false"),
-							),
-							[]byte("true"),
-						),
-					)
-					err := json.NewDecoder(buf).Decode(&l)
-					// Our solution didn't work so let's report it..
-					if err != nil {
-						sendErr(
-							ctx, genericError(
-								sub, StorageAccountT, "ListStorageAccounts", err,
-							),
-							ec,
-						)
-					} else if l.Value != nil {
-						handleValue(l.Value)
-					}
-					return
-				}
+	handler := func(az armstorage.FileSharesClientListResponse, out chan<- *FileShare) (bool, error) {
+		for _, azfs := range az.Value {
+			if azfs == nil {
+				continue
 			}
-			sendErr(ctx, genericError(sub, StorageAccountT, "ListStorageAccounts", err), ec)
-		} else if l.Value != nil {
-			handleValue(l.Value)
+			it := new(FileShare)
+			it.StorageAccount = sa.Meta
+			it.FromAzure(azfs)
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
 		}
-	}()
-	return c
+		return true, nil
+	}
+
+	return handlePager(ctx, getter, handler, genericErrorTransform(sub, FileShareT, "ListFileShares"), ec)
 }
 
-func getStorageClient(id *ResourceID, key string, env azure.Environment) (client storage.Client, err error) {
-	client, err = storage.NewBasicClientOnSovereignCloud(id.Name, key, env)
+func (impl *azureImpl) getContainers(ctx context.Context, sa *StorageAccount, ec chan<- error) <-chan *Container {
+	sub := sa.Meta.Subscription
+	client, err := armstorage.NewBlobContainersClient(sub, impl.tokenCredential, impl.clientOptions)
 	if err != nil {
-		e := simpleActionError(*id, "CreateClient", err)
-		err = e
+		sendErr(
+			ctx,
+			genericError(sub, ContainerT, "GetClient", err),
+			ec,
+		)
+
+		return nil
+	}
+	getter := func() (*runtime.Pager[armstorage.BlobContainersClientListResponse], error) {
+		return client.NewListPager(sa.Meta.ResourceGroupName, sa.Meta.Name, nil), nil
+	}
+
+	handler := func(az armstorage.BlobContainersClientListResponse, out chan<- *Container) (bool, error) {
+		for _, azc := range az.Value {
+			if azc == nil {
+				continue
+			}
+			it := new(Container)
+			it.FromAzure(azc)
+			it.SetURL(sa)
+			it.StorageAccount = sa.Meta
+			if !sendChan(ctx, it, out) {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return handlePager(ctx, getter, handler, genericErrorTransform(sub, ContainerT, "ListContainers"), ec)
+}
+
+func getTokenCredentials(opts *azcore.ClientOptions) (tokenCred azcore.TokenCredential, err error) {
+	sources := make([]azcore.TokenCredential, 0, 3)
+	envOpts := azidentity.EnvironmentCredentialOptions{*opts}
+	tokenCred, err = azidentity.NewEnvironmentCredential(&envOpts)
+	if err == nil {
+		sources = append(sources, tokenCred)
+	}
+	tenantId := os.Getenv("AZURE_TENANT_ID")
+	if tenantId != "" {
+		getTokenCredentialsWithTenant(&sources, tenantId, opts)
+	}
+	if len(sources) == 0 {
+		return nil, errors.New("failed to create a TokenCredential")
+	}
+	chained, err := azidentity.NewChainedTokenCredential(sources, &azidentity.ChainedTokenCredentialOptions{RetrySources: false})
+	if err != nil {
+		return nil, err
+	}
+
+	return &cachedTokenCredential{
+		wrapped: chained,
+	}, nil
+}
+
+func getTokenCredentialsWithTenant(sources *[]azcore.TokenCredential, tenantId string, opts *azcore.ClientOptions) {
+
+	azCliOpts := azidentity.AzureCLICredentialOptions{
+		TenantID: tenantId,
+	}
+
+	azCliCred, err := azidentity.NewAzureCLICredential(&azCliOpts)
+	if err == nil {
+		*sources = append(*sources, azCliCred)
+	}
+
+	clientId := os.Getenv("AZURE_CLIENT_ID")
+	if clientId == "" {
 		return
 	}
-	return
-}
 
-func (impl *azureImpl) GetContainers(ctx context.Context, sa *StorageAccount, ec chan<- error) <-chan *Container {
-	c := make(chan *Container, bufSize)
-	go func() {
-		defer close(c)
-		id := sa.Meta
-		client, err := getStorageClient(&id, sa.key, impl.env)
-		if err != nil {
-			e := simpleActionError(sa.Meta, "GetClient", err)
-			sendErr(ctx, e, ec)
-			return
-		}
-		bsc := client.GetBlobService()
-		var marker string
-		for {
-			cListParams := storage.ListContainersParameters{
-				MaxResults: 100,
-				Marker:     marker,
-			}
-			clr, err := bsc.ListContainers(cListParams)
-			if err != nil {
-				e := simpleActionError(id, "ListContainers", err)
-				sendErr(ctx, e, ec)
-				break
-			}
-			for _, ac := range clr.Containers {
-				var opts storage.GetContainerPermissionOptions
-				cn := new(Container)
-				cn.FromAzure(&ac)
-				cn.StorageAccount = sa.Meta
-				cn.SetURL(sa)
-				perms, err := ac.GetPermissions(&opts)
-				if err != nil {
-					e := simpleActionError(id, "GetContainerPermissions", err)
-					sendErr(ctx, e, ec)
-				} else {
-					cn.permsFromAzure(perms)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case c <- cn:
-				}
-			}
-			if clr.NextMarker == "" {
-				break
-			} else {
-				marker = clr.NextMarker
-			}
-		}
-	}()
-	return c
+	deviceCodeOpts := azidentity.DeviceCodeCredentialOptions{
+		ClientOptions: *opts,
+		TenantID:      tenantId,
+		ClientID:      clientId,
+		UserPrompt:    nil,
+	}
+
+	deviceCodeCred, err := azidentity.NewDeviceCodeCredential(&deviceCodeOpts)
+	if err == nil {
+		*sources = append(*sources, deviceCodeCred)
+	}
 }
 
 // NewAzureAPI returns an AzureAPI instance taking the credentials it needs
@@ -1334,53 +2311,37 @@ func NewAzureAPI() (AzureAPI, error) {
 		doClassic:     false,
 		classicClient: nil,
 	}
-	var err error
-	if os.Getenv("AZURE_TENANT_ID") == "" {
-		return nil, errors.New("Need to set AZURE_TENANT_ID")
-	}
 
-	api.env, err = getAzureEnv()
+	opts := &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			Retry: policy.RetryOptions{
+				// Setting these to the default
+				MaxRetries: 3,
+				TryTimeout: time.Duration(0),
+				RetryDelay: 4 * time.Second,
+
+				// This defaults to 120 seconds
+				MaxRetryDelay: 16 * time.Second,
+
+				StatusCodes: nil,
+			},
+			// TODO I don't really know what this is for. I feel like adding something to
+			// the User-Agent is being a good citizen, but is this the way to do it?
+			Telemetry: policy.TelemetryOptions{
+				ApplicationID: fmt.Sprintf("inzure/%s", LibVersion),
+				Disabled:      false,
+			},
+			Transport: defaultClient,
+		},
+	}
+	tokenCreds, err := getTokenCredentials(&opts.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
+	api.tokenCredential = tokenCreds
+	api.clientOptions = opts
 
-	// If this is defined in the environment, we're going to assume everything
-	// else needed to authenticate from the environment is.
-	if os.Getenv("AZURE_CLIENT_SECRET") != "" {
-		api.authorizer, err = auth.NewAuthorizerFromEnvironment()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Otherwise we're going to assume we have to use the device token
-		// auth flow.
-		clientID := os.Getenv("AZURE_CLIENT_ID")
-		devConf := auth.NewDeviceFlowConfig(
-			clientID,
-			os.Getenv("AZURE_TENANT_ID"),
-		)
-		devConf.AADEndpoint = api.env.ActiveDirectoryEndpoint
-		devConf.Resource = api.env.ResourceManagerEndpoint
-		api.authorizer, err = devConf.Authorizer()
-
-		if err != nil {
-			return nil, err
-		}
-	}
 	return api, nil
-}
-
-func getAzureEnv() (env azure.Environment, err error) {
-	envName := os.Getenv("AZURE_ENVIRONMENT")
-	if envName != "" {
-		env, err = azure.EnvironmentFromName(envName)
-		if err != nil {
-			return
-		}
-	} else {
-		env = azure.PublicCloud
-	}
-	return
 }
 
 func debugDumpJSON(v interface{}) {
@@ -1389,4 +2350,103 @@ func debugDumpJSON(v interface{}) {
 		panic(err)
 	}
 	fmt.Fprintf(os.Stderr, "[DEBUG] - %s\n", string(b))
+}
+
+type getTokenState uint8
+
+const (
+	shouldGetToken getTokenState = iota
+	gettingToken
+	haveToken
+)
+
+type cachedTokenCredential struct {
+	wrapped azcore.TokenCredential
+
+	getTokenMutex sync.RWMutex
+
+	lastGet time.Time
+
+	token       azcore.AccessToken
+	getTokenErr error
+}
+
+func newCachedTokenCredential(wrapped azcore.TokenCredential) azcore.TokenCredential {
+	tc := &cachedTokenCredential{
+		wrapped: wrapped,
+
+		getTokenErr: nil,
+		lastGet:     time.Unix(0, 0),
+		token: azcore.AccessToken{
+			Token:     "",
+			ExpiresOn: time.Now(),
+		},
+	}
+	return tc
+}
+
+func (cached *cachedTokenCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
+	// Use a read lock here. If all is setup already, this will be a fairly quick
+	// path through this function.
+	cached.getTokenMutex.RLock()
+	if !cached.shouldGetToken() {
+		cached.getTokenMutex.RUnlock()
+		return cached.token, cached.getTokenErr
+	}
+
+	cached.getTokenMutex.RUnlock()
+
+	cached.getTokenMutex.Lock()
+	defer cached.getTokenMutex.Unlock()
+
+	// To prevent calling GetToken a bunch of times, check when the last
+	// get was relative to now. If it was less than 10 seconds ago, assume
+	// it is valid to return it.
+
+	diff := time.Now().Sub(cached.lastGet)
+	if diff.Seconds() < 10.0 {
+		return cached.token, cached.getTokenErr
+	}
+
+	// The check should be performed again
+	cached.token, cached.getTokenErr = cached.wrapped.GetToken(ctx, opts)
+	cached.lastGet = time.Now()
+	return cached.token, cached.getTokenErr
+}
+
+func (cached *cachedTokenCredential) tokenValid() bool {
+	if cached.token.Token == "" {
+		return false
+	}
+	safeTime := time.Now().Add(1 * time.Minute)
+	// If it expires before the safe time we need a new token
+	if cached.token.ExpiresOn.Before(safeTime) {
+		return false
+	}
+	// Have a token and isn't going to expire soon
+	return true
+}
+
+func (cached *cachedTokenCredential) shouldGetToken() bool {
+	// Had an error trying to get a token, was it a timeout? Allowed
+	// to try again on timeout
+	if cached.getTokenErr != nil {
+		return errorIsTimeout(cached.getTokenErr)
+	}
+
+	return !cached.tokenValid()
+}
+
+func errorIsTimeout(err error) bool {
+	for {
+		if nerr, is := err.(net.Error); is {
+			return nerr.Timeout()
+		}
+
+		cause := errors.Unwrap(err)
+		if cause == nil {
+			return false
+		}
+		err = cause
+	}
 }

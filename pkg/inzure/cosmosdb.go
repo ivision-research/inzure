@@ -3,7 +3,7 @@ package inzure
 import (
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/cosmos-db/mgmt/2015-04-08/documentdb"
+	armcosmos "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v2"
 )
 
 type CosmosDB struct {
@@ -12,33 +12,60 @@ type CosmosDB struct {
 	Firewall CosmosDBFirewall
 }
 
-func (c *CosmosDB) FromAzure(az *documentdb.DatabaseAccount) {
+func (c *CosmosDB) FromAzure(az *armcosmos.DatabaseAccountGetResults) {
 	if az.ID == nil {
 		return
 	}
 	c.Meta.FromID(*az.ID)
-	props := az.DatabaseAccountProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	valFromPtr(&c.Endpoint, props.DocumentEndpoint)
-	if props.IPRangeFilter != nil {
-		sp := strings.Split(*props.IPRangeFilter, ",")
-		if len(sp) > 0 {
-			c.Firewall.IPs = make([]AzureIPv4, 0, len(sp))
+
+	if props.NetworkACLBypass != nil {
+		c.Firewall.AzureCanBypass.FromBool(*props.NetworkACLBypass == armcosmos.NetworkACLBypassAzureServices)
+	}
+
+	if props.PublicNetworkAccess != nil {
+		c.Firewall.PublicNetworkAllowed.FromBool(*props.PublicNetworkAccess == armcosmos.PublicNetworkAccessEnabled)
+	}
+
+	bypassResources := props.NetworkACLBypassResourceIDs
+
+	if bypassResources != nil && len(bypassResources) > 0 {
+		c.Firewall.AllowedResources = make([]ResourceID, 0, len(bypassResources))
+		for _, id := range bypassResources {
+			if id == nil {
+				continue
+			}
+			var rid ResourceID
+			rid.fromID(*id)
+			c.Firewall.AllowedResources = append(c.Firewall.AllowedResources, rid)
+		}
+	}
+
+	gValFromPtr(&c.Endpoint, props.DocumentEndpoint)
+
+	ipRules := props.IPRules
+
+	if ipRules != nil && len(ipRules) > 0 {
+		c.Firewall.IPs = make([]AzureIPv4, 0, len(ipRules))
+		for _, rule := range ipRules {
+			if rule == nil || rule.IPAddressOrRange == nil {
+				continue
+			}
+			sp := strings.Split(*rule.IPAddressOrRange, ",")
 			for _, ip := range sp {
-				if ip == "" {
-					continue
-				}
 				c.Firewall.IPs = append(c.Firewall.IPs, NewAzureIPv4FromAzure(ip))
 			}
 		}
 	}
+
 	c.Firewall.VNetEnabled.FromBoolPtr(props.IsVirtualNetworkFilterEnabled)
 	vnrs := props.VirtualNetworkRules
-	if vnrs != nil {
-		c.Firewall.VNetRules = make([]ResourceID, 0, len(*vnrs))
-		for _, vnr := range *vnrs {
+	if vnrs != nil && len(vnrs) > 0 {
+		c.Firewall.VNetRules = make([]ResourceID, 0, len(vnrs))
+		for _, vnr := range vnrs {
 			if vnr.ID != nil {
 				var rid ResourceID
 				rid.FromID(*vnr.ID)
@@ -54,17 +81,26 @@ func NewEmptyCosmosDB() *CosmosDB {
 	return &CosmosDB{
 		Meta: rid,
 		Firewall: CosmosDBFirewall{
-			IPs:       make([]AzureIPv4, 0),
-			VNetRules: make([]ResourceID, 0),
+			AllowedResources: make([]ResourceID, 0),
+			IPs:              make([]AzureIPv4, 0),
+			VNetRules:        make([]ResourceID, 0),
 		},
 	}
 }
 
 type CosmosDBFirewall struct {
-	IPs         IPCollection
+	IPs IPCollection
+
+	PublicNetworkAllowed UnknownBool
+
+	AzureCanBypass   UnknownBool
+	AllowedResources []ResourceID
+
 	VNetEnabled UnknownBool
 	VNetRules   []ResourceID
 }
+
+// TODO The CosmosDBFirewall type was updated but the methods below were not.
 
 func (f CosmosDBFirewall) AllowsIPToPortString(ip, port string) (UnknownBool, []PacketRoute, error) {
 	return FirewallAllowsIPToPortFromString(f, ip, port)
@@ -78,6 +114,7 @@ func (f CosmosDBFirewall) AllowsIP(ip AzureIPv4) (UnknownBool, []PacketRoute, er
 	// If we have no IPs we need to see if we have VNet rules
 	if len(f.IPs) == 0 {
 		// No VNet means we allow everything through
+		// TODO: This needs to also check PublicNetworkAllowed
 		if f.VNetEnabled.False() {
 			return BoolTrue, []PacketRoute{AllowsAllPacketRoute()}, nil
 		}
@@ -114,12 +151,12 @@ func (f CosmosDBFirewall) AllowsIPToPort(ip AzureIPv4, port AzurePort) (UnknownB
 	return f.AllowsIP(ip)
 }
 
-func (f CosmosDBFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (f CosmosDBFirewall) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	// We only care able "AllPorts" here since Cosmos doesn't care about ports.
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
-	// We're gonna say the whitelist isn't applicable to Cosmos
+	// We're gonna say the allowlist isn't applicable to Cosmos
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil
 	}

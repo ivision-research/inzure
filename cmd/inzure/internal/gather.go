@@ -6,15 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path"
 	"strings"
 	"sync"
+	"syscall"
 
+	"github.com/Azure/go-autorest/autorest"
 	"github.com/CarveSystems/inzure/pkg/inzure"
 	"github.com/urfave/cli"
+	"golang.org/x/net/proxy"
+	"golang.org/x/term"
 )
+
+type GatherSocks5PoxyInfo struct {
+	Address  string
+	Username string
+	Password string
+}
 
 var (
 	GatherCertPath         string
@@ -24,7 +35,8 @@ var (
 	ExcludeGatherTargets   string
 	GatherReportDir        string
 	GatherVerbose          = false
-	GatherNoListKeys       = false
+	//GatherNoListKeys       = false
+	GatherSocks5Proxy GatherSocks5PoxyInfo
 )
 
 var CmdGatherFlags = []cli.Flag{
@@ -49,12 +61,11 @@ var CmdGatherFlags = []cli.Flag{
 		Usage:       "A comma separated list of targets to exclude. This can't be set at the same time as \"targets\".",
 		Destination: &ExcludeGatherTargets,
 	},
-
-	cli.BoolFlag{
-		Name:        "no-storage-keys",
-		Usage:       "Don't try to use storage account keys. This will also disable container searching.",
-		Destination: &GatherNoListKeys,
-	},
+	//cli.BoolFlag{
+	//	Name:        "no-storage-keys",
+	//	Usage:       "Don't try to use storage account keys. This will also disable container searching.",
+	//	Destination: &GatherNoListKeys,
+	//},
 	cli.BoolFlag{
 		Name:        "v",
 		Usage:       "Verbose output",
@@ -69,6 +80,21 @@ var CmdGatherFlags = []cli.Flag{
 		Name:        "dir",
 		Usage:       "Directory to output reports to",
 		Destination: &GatherReportDir,
+	},
+	cli.StringFlag{
+		Name:        "socks5-proxy",
+		Usage:       "Host for a socks5 proxy. Format is host:[port]. Port defaults to 1080 if not specified",
+		Destination: &GatherSocks5Proxy.Address,
+	},
+	cli.StringFlag{
+		Name:        "socks5-user",
+		Usage:       "Username for socks5 proxy if required",
+		Destination: &GatherSocks5Proxy.Username,
+	},
+	cli.StringFlag{
+		Name:        "socks5-pass",
+		Usage:       "Password for socks5 proxy. If socks5-user is set and this is not, you will be prompted",
+		Destination: &GatherSocks5Proxy.Password,
 	},
 	OutputFileFlag,
 }
@@ -104,11 +130,58 @@ func scanDumpTargetsList(w io.Writer) {
 	}
 }
 
+func promptSocks5Password() string {
+	pw, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		exitError(1, "failed to read password")
+	}
+	return string(pw)
+}
+
+func checkSocks5Params() {
+	useSocks := len(GatherSocks5Proxy.Address) > 0
+	hasUser := len(GatherSocks5Proxy.Username) > 0
+	hasPassword := len(GatherSocks5Proxy.Password) > 0
+	if !useSocks {
+		if hasUser {
+			exitError(1, "-socks5-user set without -socks5-proxy")
+		} else if hasPassword {
+			exitError(1, "-socks5-pass set without -socks5-proxy")
+		}
+		return
+	}
+	if hasUser {
+		if !hasPassword {
+			GatherSocks5Proxy.Password = promptSocks5Password()
+		}
+	}
+}
+
+func getProxy() proxy.Dialer {
+	if len(GatherSocks5Proxy.Address) == 0 {
+		return nil
+	}
+	var auth *proxy.Auth
+	if len(GatherSocks5Proxy.Username) > 0 {
+		auth = &proxy.Auth{
+			User:     GatherSocks5Proxy.Username,
+			Password: GatherSocks5Proxy.Password,
+		}
+	}
+	pxy, err := proxy.SOCKS5("tcp", GatherSocks5Proxy.Address, auth, proxy.Direct)
+	if err != nil {
+		exitError(1, "failed to set up socks proxy")
+	}
+	return pxy
+}
+
 func CmdGather(c *cli.Context) {
 	if GatherTargets == "list-all" {
 		scanDumpTargetsList(os.Stdout)
 		os.Exit(0)
 	}
+
+	checkSocks5Params()
 
 	GatherSubscriptions = inzure.SubIDsFromStrings(c.StringSlice("sub"))
 	if GatherSubscriptions == nil || len(GatherSubscriptions) == 0 {
@@ -126,6 +199,8 @@ func CmdGather(c *cli.Context) {
 		}
 	}
 
+	pxy := getProxy()
+
 	var wg sync.WaitGroup
 	for _, id := range GatherSubscriptions {
 		wg.Add(1)
@@ -133,7 +208,10 @@ func CmdGather(c *cli.Context) {
 			defer wg.Done()
 
 			sub := inzure.NewSubscriptionFromID(subID)
-			sub.HasListKeysPermission(!GatherNoListKeys)
+			if pxy != nil {
+				sub.SetProxy(pxy)
+			}
+			//sub.HasListKeysPermission(!GatherNoListKeys)
 			sub.SetQuiet(!GatherVerbose)
 			if GatherTargets != "" {
 				if ExcludeGatherTargets != "" {
@@ -148,10 +226,11 @@ func CmdGather(c *cli.Context) {
 					sub.AddTarget(v)
 				}
 			} else {
+				useExclude := ExcludeGatherTargets != ""
 				for _, v := range inzure.AvailableTargets {
 					sub.AddTarget(v)
 				}
-				if ExcludeGatherTargets != "" {
+				if useExclude {
 					spl := strings.Split(ExcludeGatherTargets, ",")
 					for _, s := range spl {
 						v, ok := inzure.AvailableTargets[s]
@@ -208,6 +287,11 @@ func CmdGather(c *cli.Context) {
 			}()
 			go func() {
 				for e := range ec {
+					if pxy != nil && isSocksConnectError(e) {
+						cancel()
+						fmt.Fprintln(os.Stderr, "failed to connect to socks proxy")
+						break
+					}
 					fmt.Fprintln(os.Stderr, e)
 				}
 				doneChan <- struct{}{}
@@ -257,4 +341,28 @@ func CmdGather(c *cli.Context) {
 		}(id)
 	}
 	wg.Wait()
+}
+
+func isSocksConnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	for {
+
+		if opErr, is := err.(*net.OpError); is {
+			return opErr.Op == "socks connect"
+		}
+
+		cause := errors.Unwrap(err)
+		if cause == nil {
+			if oerr, is := err.(autorest.DetailedError); is {
+				err = oerr.Original
+			} else {
+				return false
+			}
+		} else {
+			err = cause
+		}
+
+	}
 }

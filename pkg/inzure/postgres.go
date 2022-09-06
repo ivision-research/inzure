@@ -1,6 +1,6 @@
 package inzure
 
-import "github.com/Azure/azure-sdk-for-go/services/postgresql/mgmt/2017-12-01/postgresql"
+import "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresql"
 
 type PostgresServer struct {
 	Meta        ResourceID
@@ -23,40 +23,28 @@ func NewEmptyPostgresServer() *PostgresServer {
 	return s
 }
 
-func (ps *PostgresServer) FromAzure(az *postgresql.Server) {
+func (ps *PostgresServer) FromAzure(az *armpostgresql.Server) {
 	if az.ID == nil {
 		return
 	}
 	ps.Meta.FromID(*az.ID)
 	ps.Meta.Tag = PostgresServerT
-	props := az.ServerProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	valFromPtr(&ps.FQDN, props.FullyQualifiedDomainName)
-	ps.Version = string(props.Version)
-	if props.SslEnforcement == postgresql.SslEnforcementEnumEnabled {
-		ps.SSLEnforced = BoolTrue
-	} else {
-		ps.SSLEnforced = BoolFalse
+	gValFromPtr(&ps.FQDN, props.FullyQualifiedDomainName)
+	if props.Version != nil {
+		ps.Version = string(*props.Version)
 	}
-}
-
-func (s *PostgresServer) addVNetRule(az *postgresql.VirtualNetworkRule) {
-	props := az.VirtualNetworkRuleProperties
-	if props == nil || props.VirtualNetworkSubnetID == nil {
-		return
-	}
-	var id ResourceID
-	id.fromID(*props.VirtualNetworkSubnetID)
-	s.Subnets = append(s.Subnets, id)
+	ps.SSLEnforced = ubFromRhsPtr(armpostgresql.SSLEnforcementEnumEnabled, props.SSLEnforcement)
 }
 
 type PostgresDB struct {
 	Meta ResourceID
 }
 
-func (psd *PostgresDB) FromAzure(az *postgresql.Database) {
+func (psd *PostgresDB) FromAzure(az *armpostgresql.Database) {
 	if az.ID == nil {
 		return
 	}

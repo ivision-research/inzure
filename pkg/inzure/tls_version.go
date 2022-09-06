@@ -3,14 +3,13 @@ package inzure
 import (
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/redis/mgmt/2018-03-01/redis"
-	"github.com/Azure/azure-sdk-for-go/services/web/mgmt/2018-02-01/web"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
 // TLSVersion just makes TLS version logging and comparisons easier. This
 // is essentially just translating Azure's enum type into our own.
-//
-// Theirs are: https://godoc.org/github.com/Azure/azure-sdk-for-go/services/web/mgmt/2016-09-01/web#SupportedTLSVersions
 type TLSVersion uint
 
 const (
@@ -21,26 +20,47 @@ const (
 	TLSVersionOneTwo
 )
 
-func (t *TLSVersion) FromAzureWeb(az web.SupportedTLSVersions) {
-	switch az {
-	case web.OneFullStopZero:
-		*t = TLSVersionOneZero
-	case web.OneFullStopOne:
+func (t *TLSVersion) FromAzureStorage(az *armstorage.MinimumTLSVersion) {
+	if az == nil {
 		*t = TLSVersionOneOne
-	case web.OneFullStopTwo:
+		return
+	}
+	switch *az {
+	case armstorage.MinimumTLSVersionTLS10:
+		*t = TLSVersionOneZero
+	case armstorage.MinimumTLSVersionTLS11:
+		*t = TLSVersionOneOne
+	case armstorage.MinimumTLSVersionTLS12:
 		*t = TLSVersionOneTwo
 	default:
 		*t = TLSVersionUnknown
 	}
 }
 
-func (t *TLSVersion) FromAzureRedis(az redis.TLSVersion) {
+func (t *TLSVersion) FromAzureWeb(az armappservice.SupportedTLSVersions) {
 	switch az {
-	case redis.OneFullStopZero:
+	case armappservice.SupportedTLSVersionsOne0:
 		*t = TLSVersionOneZero
-	case redis.OneFullStopOne:
+	case armappservice.SupportedTLSVersionsOne1:
 		*t = TLSVersionOneOne
-	case redis.OneFullStopTwo:
+	case armappservice.SupportedTLSVersionsOne2:
+		*t = TLSVersionOneTwo
+	default:
+		*t = TLSVersionUnknown
+	}
+}
+
+func (t *TLSVersion) FromAzureRedis(az *armredis.TLSVersion) {
+	if az == nil {
+		*t = TLSVersionUnknown
+		return
+	}
+	switch *az {
+	case armredis.TLSVersionOne0:
+		*t = TLSVersionOneZero
+	case armredis.TLSVersionOne1:
+		*t = TLSVersionOneOne
+	case armredis.TLSVersionOne2:
 		*t = TLSVersionOneTwo
 	default:
 		*t = TLSVersionUnknown

@@ -4,6 +4,18 @@ This is the library portion used by the tools specified in the `cmd` directories
 
 The APIs exposed here are intended to allow READ ONLY views into Azure subscriptions.
 
+## Authentication
+
+Inzure will authenticate with the Azure API using the following methods (checked for in this order):
+
+- Using various environmental variables [documented here](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity#EnvironmentCredential)
+    + `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` to authenticate with a service principal
+    + `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_CERTIFICATE_PATH` to authenticate with a service principal with a certificate
+- If you are logged in to the Azure CLI already, set the `AZURE_TENANT_ID` environmental variable and inzure will [authenticate with Azure CLI](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity#AzureCLICredential)
+- If `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` are set, the standard device flow will be used
+
+Note that every instance of the default `AzureAPI` implementation caches its credentials in memory.
+
 ## Subscriptions
 
 The main item for any inzure based program is the `Subscription` type. You can use this to gather data or to load already gathered data. This type also has methods for querying the data directly with [query strings](QUERY_STRINGS.md).

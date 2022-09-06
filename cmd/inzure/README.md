@@ -8,7 +8,7 @@ Note that the data output by this tool can be sensitive, potentially including p
 
 ## Setup
 
-This help documentation for authorizing access is requires the Azure CLI. If you do not have the Azure CLI, you can read about how to install it [here](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest). If you follow the directions given here exactly you should not run in to issues.
+This help documentation for authorizing access is requires the Azure CLI. If you do not have the Azure CLI, you can read about how to install it [here](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest). If you follow the directions given here exactly you should not run in to issues. If you already have an application to authenticate with, you can skip to (Authentication)[Authentication].
 
 If you intend to use the `add_subscription.py` script, you first need to clear your Azure subscription cache with:
 
@@ -52,7 +52,7 @@ export AZURE_CLIENT_ID={fromfile}
 export AZURE_CLIENT_SECRET={fromfile}
 ```
 
-### Enabling Classic Resources
+## Enabling Classic Resources
 
 If you have classic resources on your Azure account the above setup isn't enough. You will also need to upload a management certificate. First you'll need to [follow these steps](https://docs.microsoft.com/en-us/azure/cloud-services/cloud-services-certs-create#create-a-new-self-signed-certificate) to create one if you haven't already and then [follow these steps](https://docs.microsoft.com/en-us/azure/azure-api-management-certs) to upload it to the appropriate service.
 

@@ -1,9 +1,5 @@
 package inzure
 
-// TODO: https://godoc.org/github.com/Azure/azure-sdk-for-go/services/web/mgmt/2018-02-01/web#AppServiceEnvironment
-//
-// I have to rework this completely actually.. The hierarchy should be AppServices -> Apps
-
 import (
 	"encoding/json"
 	"fmt"
@@ -11,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/web/mgmt/2018-02-01/web"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 )
 
 // AppLanguage is an enum for available languages in the Azure app language
@@ -30,6 +26,7 @@ const (
 	// LanguageDocker covers a larger array of things running in Docker
 	// containers on a Linux host
 	LanguageDocker
+	LanguagePowerShell
 )
 
 func (l AppLanguage) String() string {
@@ -48,6 +45,8 @@ func (l AppLanguage) String() string {
 		return "Python"
 	case LanguageDocker:
 		return "Docker"
+	case LanguagePowerShell:
+		return "PowerShell"
 	default:
 		return "Unknown"
 	}
@@ -72,7 +71,7 @@ func (w WebAppLanguage) String() string {
 // A few things on this:
 //		  1) I couldn't make a Python app
 //		  2) The SiteConfig struct doesn't mention Ruby at all
-func (w *WebAppLanguage) FromAzureSiteConfig(az *web.SiteConfig) {
+func (w *WebAppLanguage) FromAzureSiteConfig(az *armappservice.SiteConfig) {
 	// To get lang/version we have to check linuxFxVersion first if it is linux
 	if az.LinuxFxVersion != nil {
 		// This string is the "language|version"
@@ -81,6 +80,8 @@ func (w *WebAppLanguage) FromAzureSiteConfig(az *web.SiteConfig) {
 			lang := split[0]
 			version := split[1]
 			switch strings.ToLower(lang) {
+			case "dotnetassembly":
+				fallthrough
 			case "dotnet":
 				fallthrough
 			case "dotnetcore":
@@ -91,12 +92,16 @@ func (w *WebAppLanguage) FromAzureSiteConfig(az *web.SiteConfig) {
 				w.Language = LanguageRuby
 			case "python":
 				w.Language = LanguagePython
+			case "javascript":
+				fallthrough
 			case "node":
 				w.Language = LanguageNode
 			case "java":
 				w.Language = LanguageJava
 			case "docker":
 				w.Language = LanguageDocker
+			case "powershell":
+				w.Language = LanguagePowerShell
 			default:
 				fmt.Fprintln(os.Stderr, "Unexpected language in linuxFxVersion:", lang)
 			}
@@ -122,6 +127,9 @@ func (w *WebAppLanguage) FromAzureSiteConfig(az *web.SiteConfig) {
 			// TOOD: This was returned as nonnil with a value even on a PHP Linux app
 			w.Language = LanguageDotNet
 			w.Version = *az.NetFrameworkVersion
+		} else if az.PowerShellVersion != nil && *az.PowerShellVersion != "" {
+			w.Language = LanguagePowerShell
+			w.Version = *az.PowerShellVersion
 		}
 	}
 }
@@ -163,6 +171,8 @@ func NewEmptyFunctionConfigBinding() FunctionConfigBinding {
 type Function struct {
 	Meta           ResourceID
 	Config         FunctionConfig
+	IsDisabled     UnknownBool
+	Language       AppLanguage
 	ScriptRootPath string
 	ScriptURL      string
 	ConfigURL      string
@@ -170,10 +180,10 @@ type Function struct {
 	URL            string
 }
 
-func NewEmptyFunction() Function {
+func NewEmptyFunction() *Function {
 	var id ResourceID
 	id.setupEmpty()
-	return Function{
+	return &Function{
 		Meta: id,
 	}
 }
@@ -183,15 +193,29 @@ type bindingIntermediate struct {
 	Direction string
 }
 
-func (f *Function) FromAzure(fe *web.FunctionEnvelope) {
+func (f *Function) CanHttpTrigger() UnknownBool {
+	if f.Config.Bindings == nil {
+		return BoolUnknown
+	}
+	for _, b := range f.Config.Bindings {
+		if strings.Contains(strings.ToLower(b.Type), "http") {
+			return BoolTrue
+		}
+	}
+	return BoolFalse
+}
+
+func (f *Function) FromAzure(fe *armappservice.FunctionEnvelope) {
 	if fe.ID != nil {
 		f.Meta.fromID(*fe.ID)
 	}
-	props := fe.FunctionEnvelopeProperties
+	props := fe.Properties
 	if props == nil {
 		return
 	}
-	if conf, is := fe.Config.(map[string]interface{}); is {
+	// TODO there is more info to get out of bindings, including the trigger
+	// type.
+	if conf, is := props.Config.(map[string]interface{}); is {
 		if bIface, has := conf["bindings"]; has {
 			if bytes, err := json.Marshal(bIface); err == nil {
 				var into []bindingIntermediate
@@ -214,18 +238,41 @@ func (f *Function) FromAzure(fe *web.FunctionEnvelope) {
 		// KNOW is at `/api/X`...
 		f.URL = strings.Replace(*props.Href, ".net/admin/functions/", ".net/api/", 1)
 	}
-	if props.ScriptRootPathHref != nil {
-		f.ScriptRootPath = *props.ScriptRootPathHref
+	f.IsDisabled.FromBoolPtr(props.IsDisabled)
+	gValFromPtr(&f.ScriptRootPath, props.ScriptRootPathHref)
+	gValFromPtr(&f.ConfigURL, props.ConfigHref)
+	gValFromPtr(&f.SecretsURL, props.SecretsFileHref)
+	gValFromPtr(&f.ScriptURL, props.ScriptHref)
+
+	if props.Language != nil {
+		switch strings.ToLower(*props.Language) {
+		case "dotnetassembly":
+			fallthrough
+		case "dotnet":
+			fallthrough
+		case "dotnetcore":
+			f.Language = LanguageDotNet
+		case "php":
+			f.Language = LanguagePHP
+		case "ruby":
+			f.Language = LanguageRuby
+		case "python":
+			f.Language = LanguagePython
+		case "javascript":
+			fallthrough
+		case "node":
+			f.Language = LanguageNode
+		case "java":
+			f.Language = LanguageJava
+		case "docker":
+			f.Language = LanguageDocker
+		case "powershell":
+			f.Language = LanguagePowerShell
+		default:
+			fmt.Fprintln(os.Stderr, "Unexpected language in Function.Language:", *props.Language)
+		}
 	}
-	if props.ConfigHref != nil {
-		f.ConfigURL = *props.ConfigHref
-	}
-	if props.SecretsFileHref != nil {
-		f.SecretsURL = *props.SecretsFileHref
-	}
-	if props.ScriptHref != nil {
-		f.ScriptURL = *props.ScriptHref
-	}
+
 }
 
 // FTPState represents the ftp setting on the web app
@@ -321,9 +368,9 @@ func (waf WebAppIPFirewall) AllowsIPToPort(ip AzureIPv4, port AzurePort) (Unknow
 	return waf.AllowsIP(ip)
 }
 
-func (waf WebAppIPFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (waf WebAppIPFirewall) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil
@@ -386,13 +433,13 @@ func (ipr *WebAppIPRestriction) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, &ptrs)
 }
 
-func (ipr *WebAppIPRestriction) FromAzure(az *web.IPSecurityRestriction) {
+func (ipr *WebAppIPRestriction) FromAzure(az *armappservice.IPSecurityRestriction) {
 	a := az.Action
 	if a != nil {
 		ipr.Allow.FromBool(strings.ToLower(*a) == "allow")
 	}
-	valFromPtr(&ipr.Priority, az.Priority)
-	valFromPtr(&ipr.Name, az.Name)
+	gValFromPtr(&ipr.Priority, az.Priority)
+	gValFromPtr(&ipr.Name, az.Name)
 	if az.IPAddress == nil {
 		// Probably a VNet rule
 		if az.VnetSubnetResourceID == nil {
@@ -409,53 +456,114 @@ type AppServiceEnvironment struct {
 	Meta ResourceID
 }
 
+type WebAppHandlerMapping struct {
+	Extension       string
+	Arguments       string
+	ScriptProcessor string
+}
+
+func (m *WebAppHandlerMapping) FromAzure(az *armappservice.HandlerMapping) {
+	gValFromPtr(&m.Extension, az.Extension)
+	gValFromPtr(&m.Arguments, az.Arguments)
+	gValFromPtr(&m.ScriptProcessor, az.ScriptProcessor)
+}
+
+type WebAppClientCertMode uint8
+
+const (
+	WebAppClientCertModeUnknown WebAppClientCertMode = iota
+	WebAppClientCertModeRequired
+	WebAppClientCertModeOptional
+	WebAppClientCertModeOptionalInteractiveUser
+)
+
+func (cm *WebAppClientCertMode) FromAzure(az *armappservice.ClientCertMode) {
+	if az == nil {
+		*cm = WebAppClientCertModeUnknown
+		return
+	}
+	switch *az {
+	case armappservice.ClientCertModeOptional:
+		*cm = WebAppClientCertModeOptional
+	case armappservice.ClientCertModeRequired:
+		*cm = WebAppClientCertModeRequired
+	case armappservice.ClientCertModeOptionalInteractiveUser:
+		*cm = WebAppClientCertModeOptionalInteractiveUser
+	default:
+		*cm = WebAppClientCertModeUnknown
+	}
+
+}
+
 // WebApp holds all of the required information for an Azure mananged web app.
 type WebApp struct {
-	Meta                   ResourceID
-	Slot                   string
-	Enabled                UnknownBool
-	RemoteDebuggingEnabled UnknownBool
-	HasLocalSQL            UnknownBool
-	RemoteDebuggingVersion string
-	FTPState               FTPState
-	HTTPLogging            UnknownBool
-	HostnamesDisabled      UnknownBool
-	HTTPSOnly              UnknownBool
-	MinTLSVersion          TLSVersion
-	Language               WebAppLanguage
-	VirtualNetworkName     string
-	APIDefinitionURL       string
-	UsesLocalSQL           UnknownBool
-	DocumentRoot           string
-	DefaultHostname        string
-	OutboundIPAddresses    IPCollection
-	EnabledHosts           []WebHost
-	Functions              []Function
-	Firewall               WebAppIPFirewall
+	Meta                     ResourceID
+	Slot                     string
+	Enabled                  UnknownBool
+	RemoteDebuggingEnabled   UnknownBool
+	HasLocalSQL              UnknownBool
+	RemoteDebuggingVersion   string
+	FTPState                 FTPState
+	HTTPLogging              UnknownBool
+	HostnamesDisabled        UnknownBool
+	HTTP2Enabled             UnknownBool
+	HTTPSOnly                UnknownBool
+	MinTLSVersion            TLSVersion
+	SCMMinTLSVersion         TLSVersion
+	Language                 WebAppLanguage
+	CommandLine              string
+	VirtualNetworkName       string
+	APIDefinitionURL         string
+	UsesLocalSQL             UnknownBool
+	DocumentRoot             string
+	DefaultHostname          string
+	ClientCertEnabled        UnknownBool
+	ClientCertMode           WebAppClientCertMode
+	ClientCertExclusionPaths []string
+	OutboundIPAddresses      IPCollection
+	HandlerMappings          []WebAppHandlerMapping
+	EnabledHosts             []WebHost
+	Functions                []Function
+	Firewall                 WebAppIPFirewall
+	SCMFirewall              WebAppIPFirewall
 }
 
 func NewEmptyWebApp() *WebApp {
 	var id ResourceID
 	id.setupEmpty()
 	return &WebApp{
-		Meta:                id,
-		OutboundIPAddresses: make(IPCollection, 0),
-		EnabledHosts:        make([]WebHost, 0),
-		Functions:           make([]Function, 0),
-		Firewall:            make(WebAppIPFirewall, 0),
+		Meta:                     id,
+		OutboundIPAddresses:      make(IPCollection, 0),
+		EnabledHosts:             make([]WebHost, 0),
+		Functions:                make([]Function, 0),
+		HandlerMappings:          make([]WebAppHandlerMapping, 0),
+		Firewall:                 make(WebAppIPFirewall, 0),
+		SCMFirewall:              make(WebAppIPFirewall, 0),
+		ClientCertExclusionPaths: make([]string, 0),
 	}
 }
 
-func (w *WebApp) fillConfigInfo(conf *web.SiteConfig) {
+func (w *WebApp) fillConfigInfo(conf *armappservice.SiteConfig) {
 	if conf == nil {
 		return
 	}
+
+	if conf.HandlerMappings != nil && len(conf.HandlerMappings) > 0 {
+		w.HandlerMappings = make([]WebAppHandlerMapping, len(conf.HandlerMappings))
+		for i, m := range conf.HandlerMappings {
+			w.HandlerMappings[i].FromAzure(m)
+		}
+	}
+
 	fw := conf.IPSecurityRestrictions
-	if fw != nil && len(*fw) > 0 {
-		w.Firewall = make(WebAppIPFirewall, 0, len(*fw))
-		for _, e := range *fw {
+	if fw != nil && len(fw) > 0 {
+		w.Firewall = make(WebAppIPFirewall, 0, len(fw))
+		for _, e := range fw {
+			if e == nil {
+				continue
+			}
 			var ipr WebAppIPRestriction
-			ipr.FromAzure(&e)
+			ipr.FromAzure(e)
 			// Ensure that there isn't a null
 			if ipr.IPRange == nil {
 				ipr.SetupEmpty()
@@ -464,44 +572,64 @@ func (w *WebApp) fillConfigInfo(conf *web.SiteConfig) {
 		}
 		sort.Sort(w.Firewall)
 	}
+
+	fw = conf.ScmIPSecurityRestrictions
+	if fw != nil && len(fw) > 0 {
+		w.SCMFirewall = make(WebAppIPFirewall, 0, len(fw))
+		for _, e := range fw {
+			if e == nil {
+				continue
+			}
+			var ipr WebAppIPRestriction
+			ipr.FromAzure(e)
+			// Ensure that there isn't a null
+			if ipr.IPRange == nil {
+				ipr.SetupEmpty()
+			}
+			w.SCMFirewall = append(w.Firewall, ipr)
+		}
+		sort.Sort(w.SCMFirewall)
+	}
+
 	w.Language.FromAzureSiteConfig(conf)
-	if conf.LocalMySQLEnabled != nil {
-		w.HasLocalSQL = unknownFromBool(*conf.LocalMySQLEnabled)
-	}
-	if conf.HTTPLoggingEnabled != nil {
-		w.HTTPLogging = unknownFromBool(*conf.HTTPLoggingEnabled)
-	}
-	if conf.RemoteDebuggingEnabled != nil {
-		w.RemoteDebuggingEnabled = unknownFromBool(*conf.RemoteDebuggingEnabled)
-	}
+	w.HasLocalSQL.FromBoolPtr(conf.LocalMySQLEnabled)
+	w.HTTPLogging.FromBoolPtr(conf.HTTPLoggingEnabled)
+	w.HTTP2Enabled.FromBoolPtr(conf.Http20Enabled)
+	w.RemoteDebuggingEnabled.FromBoolPtr(conf.RemoteDebuggingEnabled)
 	if conf.RemoteDebuggingVersion != nil {
 		w.RemoteDebuggingVersion = *conf.RemoteDebuggingVersion
 	}
-	if conf.APIDefinition != nil && conf.APIDefinition.URL != nil {
-		w.APIDefinitionURL = *conf.APIDefinition.URL
+	if conf.APIDefinition != nil {
+		gValFromPtr(&w.APIDefinitionURL, conf.APIDefinition.URL)
 	}
-	if conf.LocalMySQLEnabled != nil {
-		w.UsesLocalSQL = unknownFromBool(*conf.LocalMySQLEnabled)
-	}
-	if conf.DocumentRoot != nil {
-		w.DocumentRoot = *conf.DocumentRoot
-	}
-	switch conf.FtpsState {
-	case web.AllAllowed:
-		w.FTPState = FTPStateAll
-	case web.FtpsOnly:
-		w.FTPState = FTPStateFTPSOnly
-	case web.Disabled:
-		w.FTPState = FTPStateDisabled
-	default:
+	w.UsesLocalSQL.FromBoolPtr(conf.LocalMySQLEnabled)
+	gValFromPtr(&w.DocumentRoot, conf.DocumentRoot)
+	gValFromPtr(&w.CommandLine, conf.AppCommandLine)
+	if conf.FtpsState != nil {
+		switch *conf.FtpsState {
+		case armappservice.FtpsStateAllAllowed:
+			w.FTPState = FTPStateAll
+		case armappservice.FtpsStateFtpsOnly:
+			w.FTPState = FTPStateFTPSOnly
+		case armappservice.FtpsStateDisabled:
+			w.FTPState = FTPStateDisabled
+		default:
+			w.FTPState = FTPStateUnknown
+		}
+	} else {
 		w.FTPState = FTPStateUnknown
 	}
-	if w.MinTLSVersion == TLSVersionUnknown {
-		w.MinTLSVersion.FromAzureWeb(conf.MinTLSVersion)
+	if conf.MinTLSVersion != nil && w.MinTLSVersion == TLSVersionUnknown {
+		w.MinTLSVersion.FromAzureWeb(*conf.MinTLSVersion)
 	}
+	if conf.ScmMinTLSVersion != nil {
+		w.SCMMinTLSVersion.FromAzureWeb(*conf.ScmMinTLSVersion)
+	}
+	gValFromPtr(&w.VirtualNetworkName, conf.VnetName)
 }
 
-func (w *WebApp) FromAzure(aw *web.Site) {
+func (w *WebApp) FromAzure(aw *armappservice.Site) {
+	w.Meta.setupEmpty()
 	if aw.ID != nil {
 		var rid ResourceID
 		rid.fromID(*aw.ID)
@@ -516,15 +644,30 @@ func (w *WebApp) FromAzure(aw *web.Site) {
 		} else {
 			w.Meta = rid
 		}
+	} else {
+		w.Meta.setupEmpty()
 	}
 
-	w.HTTPSOnly.FromBoolPtr(aw.HTTPSOnly)
-	w.HostnamesDisabled.FromBoolPtr(aw.HostNamesDisabled)
-
-	props := aw.SiteProperties
+	props := aw.Properties
 	if props == nil {
 		return
 	}
+
+	w.fillConfigInfo(props.SiteConfig)
+
+	w.ClientCertEnabled.FromBoolPtr(props.ClientCertEnabled)
+	w.ClientCertMode.FromAzure(props.ClientCertMode)
+	w.HTTPSOnly.FromBoolPtr(props.HTTPSOnly)
+	w.HostnamesDisabled.FromBoolPtr(props.HostNamesDisabled)
+
+	if props.ClientCertExclusionPaths != nil && *props.ClientCertExclusionPaths != "" {
+		split := strings.Split(*props.ClientCertExclusionPaths, ",")
+		w.ClientCertExclusionPaths = make([]string, len(split))
+		for i, e := range split {
+			w.ClientCertExclusionPaths[i] = e
+		}
+	}
+
 	if props.OutboundIPAddresses != nil {
 		sp := strings.Split(*props.OutboundIPAddresses, ",")
 		w.OutboundIPAddresses = make([]AzureIPv4, len(sp))
@@ -536,15 +679,19 @@ func (w *WebApp) FromAzure(aw *web.Site) {
 	w.Enabled.FromBoolPtr(props.Enabled)
 
 	if props.EnabledHostNames != nil {
-		w.EnabledHosts = make([]WebHost, 0, len(*props.EnabledHostNames))
-		for _, hn := range *props.EnabledHostNames {
+		w.EnabledHosts = make([]WebHost, 0, len(props.EnabledHostNames))
+		for _, hn := range props.EnabledHostNames {
 			host := WebHost{
-				Name: hn,
+				Name: *hn,
 			}
-			if props.HostNameSslStates != nil {
-				for _, state := range *props.HostNameSslStates {
-					if state.Name != nil && *state.Name == hn {
-						host.SSLEnabled = unknownFromBool(state.SslState == web.SslStateDisabled)
+			if props.HostNameSSLStates != nil {
+				for _, state := range props.HostNameSSLStates {
+					if state.Name != nil && *state.Name == host.Name {
+						if state.SSLState != nil {
+							host.SSLEnabled = unknownFromBool(*state.SSLState == armappservice.SSLStateDisabled)
+						} else {
+							host.SSLEnabled = BoolUnknown
+						}
 						break
 					}
 				}
@@ -552,7 +699,5 @@ func (w *WebApp) FromAzure(aw *web.Site) {
 			w.EnabledHosts = append(w.EnabledHosts, host)
 		}
 	}
-	if props.DefaultHostName != nil {
-		w.DefaultHostname = *props.DefaultHostName
-	}
+	gValFromPtr(&w.DefaultHostname, props.DefaultHostName)
 }

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 )
 
 // SecurityRuleProtocol is a psuedo enum type for the different protocl options
@@ -39,13 +39,17 @@ func (p SecurityRuleProtocol) String() string {
 	}
 }
 
-func (s *SecurityRuleProtocol) FromAzure(az network.SecurityRuleProtocol) {
-	switch az {
-	case network.SecurityRuleProtocolAsterisk:
+func (s *SecurityRuleProtocol) FromAzure(az *armnetwork.SecurityRuleProtocol) {
+	if az == nil {
+		*s = ProtocolUnknown
+		return
+	}
+	switch *az {
+	case armnetwork.SecurityRuleProtocolAsterisk:
 		*s = ProtocolAll
-	case network.SecurityRuleProtocolTCP:
+	case armnetwork.SecurityRuleProtocolTCP:
 		*s = ProtocolTCP
-	case network.SecurityRuleProtocolUDP:
+	case armnetwork.SecurityRuleProtocolUDP:
 		*s = ProtocolUDP
 	default:
 		*s = ProtocolUnknown
@@ -66,11 +70,11 @@ func (p *PublicIP) setupEmpty() {
 	p.Meta.setupEmpty()
 }
 
-func (p *PublicIP) FromAzure(ap *network.PublicIPAddress) {
+func (p *PublicIP) FromAzure(ap *armnetwork.PublicIPAddress) {
 	if ap.ID != nil {
 		p.Meta.fromID(*ap.ID)
 	}
-	props := ap.PublicIPAddressPropertiesFormat
+	props := ap.Properties
 	if props == nil {
 		return
 	}
@@ -98,13 +102,11 @@ func (ipc *IPConfiguration) setupEmpty() {
 	ipc.ASGRefs = make([]ResourceID, 0)
 }
 
-// TODO: There is a lot of info in this data type sift through all of it:
-// https://godoc.org/github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network#InterfaceIPConfigurationPropertiesFormat
-func (ipc *IPConfiguration) FromAzure(azipc *network.InterfaceIPConfiguration) {
+func (ipc *IPConfiguration) FromAzure(azipc *armnetwork.InterfaceIPConfiguration) {
 	if azipc.ID != nil {
 		ipc.Meta.fromID(*azipc.ID)
 	}
-	props := azipc.InterfaceIPConfigurationPropertiesFormat
+	props := azipc.Properties
 	if props == nil {
 		return
 	}
@@ -118,10 +120,10 @@ func (ipc *IPConfiguration) FromAzure(azipc *network.InterfaceIPConfiguration) {
 		ipc.PublicIP.FromAzure(props.PublicIPAddress)
 	}
 	asgs := props.ApplicationSecurityGroups
-	if asgs != nil && len(*asgs) > 0 {
+	if asgs != nil && len(asgs) > 0 {
 		var r ResourceID
-		ipc.ASGRefs = make([]ResourceID, 0, len(*asgs))
-		for _, asg := range *asgs {
+		ipc.ASGRefs = make([]ResourceID, 0, len(asgs))
+		for _, asg := range asgs {
 			if asg.ID != nil {
 				r.fromID(*asg.ID)
 				ipc.ASGRefs = append(ipc.ASGRefs, r)
@@ -152,11 +154,11 @@ func NewEmptyNetworkInterface() *NetworkInterface {
 	}
 }
 
-func (n *NetworkInterface) FromAzure(az *network.Interface) {
+func (n *NetworkInterface) FromAzure(az *armnetwork.Interface) {
 	if az.ID != nil {
 		n.Meta.fromID(*az.ID)
 	}
-	props := az.InterfacePropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
@@ -169,12 +171,12 @@ func (n *NetworkInterface) FromAzure(az *network.Interface) {
 		}
 	*/
 	if props.IPConfigurations != nil {
-		ipcs := *props.IPConfigurations
+		ipcs := props.IPConfigurations
 		n.IPConfigurations = make([]IPConfiguration, 0, len(ipcs))
 		for _, ipc := range ipcs {
 			var tmp IPConfiguration
 			tmp.setupEmpty()
-			tmp.FromAzure(&ipc)
+			tmp.FromAzure(ipc)
 			n.IPConfigurations = append(n.IPConfigurations, tmp)
 		}
 	}
@@ -194,11 +196,11 @@ type SecurityRule struct {
 	DestPorts   PortCollection
 }
 
-func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
+func (s *SecurityRule) FromAzure(az *armnetwork.SecurityRule) {
 	if az.Name != nil {
 		s.Name = *az.Name
 	}
-	props := az.SecurityRulePropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
@@ -208,13 +210,16 @@ func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
 	if props.Priority != nil {
 		s.Priority = *props.Priority
 	}
-	s.Allows = props.Access == network.SecurityRuleAccessAllow
-	s.Inbound = props.Direction == network.SecurityRuleDirectionInbound
+
+	// TODO Hm.
+	s.Allows = ubFromRhsPtr(armnetwork.SecurityRuleAccessAllow, props.Access).True()
+	s.Inbound = ubFromRhsPtr(armnetwork.SecurityRuleDirectionInbound, props.Direction).True()
+
 	s.Protocol.FromAzure(props.Protocol)
-	if props.SourceAddressPrefixes != nil && len(*props.SourceAddressPrefixes) > 0 {
-		for _, ip := range *props.SourceAddressPrefixes {
-			if len(ip) > 0 {
-				s.SourceIPs = append(s.SourceIPs, NewAzureIPv4FromAzure(ip))
+	if props.SourceAddressPrefixes != nil && len(props.SourceAddressPrefixes) > 0 {
+		for _, ip := range props.SourceAddressPrefixes {
+			if ip != nil && len(*ip) > 0 {
+				s.SourceIPs = append(s.SourceIPs, NewAzureIPv4FromAzure(*ip))
 			}
 		}
 	}
@@ -224,10 +229,10 @@ func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
 			NewAzureIPv4FromAzure(*props.SourceAddressPrefix),
 		)
 	}
-	if props.DestinationAddressPrefixes != nil && len(*props.DestinationAddressPrefixes) > 0 {
-		for _, ip := range *props.DestinationAddressPrefixes {
-			if len(ip) > 0 {
-				s.DestIPs = append(s.DestIPs, NewAzureIPv4FromAzure(ip))
+	if props.DestinationAddressPrefixes != nil && len(props.DestinationAddressPrefixes) > 0 {
+		for _, ip := range props.DestinationAddressPrefixes {
+			if ip != nil && len(*ip) > 0 {
+				s.DestIPs = append(s.DestIPs, NewAzureIPv4FromAzure(*ip))
 			}
 		}
 	}
@@ -239,7 +244,7 @@ func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
 	}
 	if props.DestinationApplicationSecurityGroups != nil {
 		var r ResourceID
-		for _, asg := range *props.DestinationApplicationSecurityGroups {
+		for _, asg := range props.DestinationApplicationSecurityGroups {
 			if asg.ID != nil {
 				r.fromID(*asg.ID)
 				name := strings.Replace(r.Name, "-", "_", -1)
@@ -254,11 +259,13 @@ func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
 		)
 	}
 	if props.SourcePortRanges != nil {
-		for _, p := range *props.SourcePortRanges {
-			s.SourcePorts = append(
-				s.SourcePorts,
-				NewPortFromAzure(p),
-			)
+		for _, p := range props.SourcePortRanges {
+			if p != nil {
+				s.SourcePorts = append(
+					s.SourcePorts,
+					NewPortFromAzure(*p),
+				)
+			}
 		}
 	}
 	if props.DestinationPortRange != nil {
@@ -268,16 +275,16 @@ func (s *SecurityRule) FromAzure(az *network.SecurityRule) {
 		)
 	}
 	if props.DestinationPortRanges != nil {
-		for _, p := range *props.DestinationPortRanges {
-			s.DestPorts = append(
-				s.DestPorts,
-				NewPortFromAzure(p),
-			)
+		for _, p := range props.DestinationPortRanges {
+			if p != nil {
+				s.DestPorts = append(
+					s.DestPorts,
+					NewPortFromAzure(*p),
+				)
+			}
 		}
 	}
 }
-
-// TODO: Look in to peering: https://www.godoc.org/github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network#VirtualNetworkPropertiesFormat
 
 // A VirtualNetwork holds all networking information about the subscription.
 type VirtualNetwork struct {
@@ -323,11 +330,11 @@ func NewEmptyVirtualNetwork() *VirtualNetwork {
 	return vn
 }
 
-func (v *VirtualNetwork) FromAzure(az *network.VirtualNetwork) {
+func (v *VirtualNetwork) FromAzure(az *armnetwork.VirtualNetwork) {
 	if az.ID != nil {
 		v.Meta.fromID(*az.ID)
 	}
-	props := az.VirtualNetworkPropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
@@ -347,9 +354,11 @@ func (v *VirtualNetwork) FromAzure(az *network.VirtualNetwork) {
 		v.VMProtectionEnabled = unknownFromBool(*props.EnableVMProtection)
 	}
 	if props.AddressSpace != nil && props.AddressSpace.AddressPrefixes != nil {
-		pres := *props.AddressSpace.AddressPrefixes
+		pres := props.AddressSpace.AddressPrefixes
 		for _, pre := range pres {
-			v.AddressSpaces = append(v.AddressSpaces, NewAzureIPv4FromAzure(pre))
+			if pre != nil && len(*pre) > 0 {
+				v.AddressSpaces = append(v.AddressSpaces, NewAzureIPv4FromAzure(*pre))
+			}
 		}
 	}
 }
@@ -366,7 +375,7 @@ func (s *Subnet) setupEmpty() {
 	s.IPConfigurationRefs = make([]ResourceID, 0)
 }
 
-func (s *Subnet) FromAzure(as *network.Subnet) {
+func (s *Subnet) FromAzure(as *armnetwork.Subnet) {
 	// Note that in this case we're going to continue with everything unless
 	// we get nothing after this because this could have come from somewhere
 	// else.
@@ -387,7 +396,7 @@ func (s *Subnet) FromAzure(as *network.Subnet) {
 	if s.Meta.RawID == "" {
 		return
 	}
-	props := as.SubnetPropertiesFormat
+	props := as.Properties
 	if props == nil {
 		return
 	}
@@ -407,9 +416,9 @@ func (s *Subnet) FromAzure(as *network.Subnet) {
 	// important. I could also get this info through NetworkInterfaces so
 	// I'll come back to this. It might be nicer to get it here.
 	ipcs := props.IPConfigurations
-	if ipcs != nil && len(*ipcs) > 0 {
-		s.IPConfigurationRefs = make([]ResourceID, 0, len(*ipcs))
-		for _, conf := range *ipcs {
+	if ipcs != nil && len(ipcs) > 0 {
+		s.IPConfigurationRefs = make([]ResourceID, 0, len(ipcs))
+		for _, conf := range ipcs {
 			if conf.ID != nil {
 				var id ResourceID
 				id.fromID(*conf.ID)
@@ -588,19 +597,19 @@ func (nsg *NetworkSecurityGroup) AllowsIP(checkIP AzureIPv4) (UnknownBool, []Pac
 	return BoolTrue, allowedDestinations, nil
 }
 
-// RespectsWhitelist for a NetworkSecurityGroup is NOT port agnostic. This
+// RespectsAllowlist for a NetworkSecurityGroup is NOT port agnostic. This
 // means you'll never get a BoolNotApplicable from this and the only time
 // an error is returned is when both AllPorts and PortMap are not defined.
-func (nsg *NetworkSecurityGroup) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (nsg *NetworkSecurityGroup) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	if wl.AllPorts == nil && wl.PortMap == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	failed := false
 	failedUncertain := false
 	extras := make([]IPPort, 0)
 	for _, rule := range nsg.InboundRules {
 		// We only care about Allows rules here since this is negative concept
-		// of respecting a whitelist.
+		// of respecting a allowlist.
 		if rule.Allows {
 			for _, allowedIP := range rule.SourceIPs {
 				// Check this first so we don't have to list ports
@@ -691,6 +700,18 @@ type PacketRoute struct {
 	IPs      IPCollection
 	Ports    PortCollection
 	Protocol SecurityRuleProtocol
+}
+
+func AllIPPorts() []IPPort {
+	return []IPPort{AllIPPort()}
+}
+
+func AllIPPort() IPPort {
+	return IPPort{IP: NewAzureIPv4FromAzure("*"), Port: NewPortFromAzure("*")}
+}
+
+func AllowsAllPacketRoutes() []PacketRoute {
+	return []PacketRoute{AllowsAllPacketRoute()}
 }
 
 func AllowsAllPacketRoute() PacketRoute {
@@ -851,19 +872,19 @@ func NewEmptyNSG() *NetworkSecurityGroup {
 	return nsg
 }
 
-func (nsg *NetworkSecurityGroup) FromAzure(aznsg *network.SecurityGroup) {
+func (nsg *NetworkSecurityGroup) FromAzure(aznsg *armnetwork.SecurityGroup) {
 	if aznsg.ID != nil {
 		nsg.Meta.fromID(*aznsg.ID)
 	} else {
 		nsg.Meta.setupEmpty()
 		return
 	}
-	props := aznsg.SecurityGroupPropertiesFormat
+	props := aznsg.Properties
 	if props == nil {
 		return
 	}
 	if props.Subnets != nil {
-		for _, s := range *props.Subnets {
+		for _, s := range props.Subnets {
 			var id ResourceID
 			if s.ID != nil {
 				id.fromID(*s.ID)
@@ -873,7 +894,7 @@ func (nsg *NetworkSecurityGroup) FromAzure(aznsg *network.SecurityGroup) {
 	}
 
 	if props.NetworkInterfaces != nil {
-		for _, ani := range *props.NetworkInterfaces {
+		for _, ani := range props.NetworkInterfaces {
 			if ani.ID != nil {
 				var id ResourceID
 				id.fromID(*ani.ID)
@@ -883,36 +904,40 @@ func (nsg *NetworkSecurityGroup) FromAzure(aznsg *network.SecurityGroup) {
 	}
 
 	if props.SecurityRules != nil {
-		for _, azr := range *props.SecurityRules {
-			sprops := azr.SecurityRulePropertiesFormat
+		for _, azr := range props.SecurityRules {
+			sprops := azr.Properties
 			if sprops == nil {
 				continue
 			}
 			var r SecurityRule
-			r.FromAzure(&azr)
+			r.FromAzure(azr)
 			dir := sprops.Direction
-			if dir == network.SecurityRuleDirectionInbound {
-				nsg.InboundRules = append(nsg.InboundRules, r)
-			} else {
-				nsg.OutboundRules = append(nsg.OutboundRules, r)
+			if dir != nil {
+				if *dir == armnetwork.SecurityRuleDirectionInbound {
+					nsg.InboundRules = append(nsg.InboundRules, r)
+				} else {
+					nsg.OutboundRules = append(nsg.OutboundRules, r)
+				}
 			}
 		}
 	}
 
 	if props.DefaultSecurityRules != nil {
-		dsr := *props.DefaultSecurityRules
+		dsr := props.DefaultSecurityRules
 		for _, azsr := range dsr {
-			sprops := azsr.SecurityRulePropertiesFormat
+			sprops := azsr.Properties
 			if sprops == nil {
 				return
 			}
 			var r SecurityRule
-			r.FromAzure(&azsr)
+			r.FromAzure(azsr)
 			dir := sprops.Direction
-			if dir == network.SecurityRuleDirectionInbound {
-				nsg.InboundRules = append(nsg.InboundRules, r)
-			} else {
-				nsg.OutboundRules = append(nsg.OutboundRules, r)
+			if dir != nil {
+				if *dir == armnetwork.SecurityRuleDirectionInbound {
+					nsg.InboundRules = append(nsg.InboundRules, r)
+				} else {
+					nsg.OutboundRules = append(nsg.OutboundRules, r)
+				}
 			}
 		}
 	}
@@ -931,7 +956,7 @@ func NewEmptyASG() *ApplicationSecurityGroup {
 	return asg
 }
 
-func (asg *ApplicationSecurityGroup) FromAzure(az *network.ApplicationSecurityGroup) {
+func (asg *ApplicationSecurityGroup) FromAzure(az *armnetwork.ApplicationSecurityGroup) {
 	if az == nil || az.ID == nil {
 		return
 	}

@@ -111,12 +111,12 @@ func TestFirewallRuleUnknownAllowsAllAzure(t *testing.T) {
 	doFirewallRuleTest(t, "10.0.0.12", rules, BoolUnknown, nil)
 }
 
-func doFirewallRuleWhitelistTest(
-	t *testing.T, wl FirewallWhitelist, rules []FirewallRule,
+func doFirewallRuleAllowlistTest(
+	t *testing.T, wl FirewallAllowlist, rules []FirewallRule,
 	expected UnknownBool, combos []IPPort,
 ) {
 	fw := FirewallRules(rules)
-	actual, ipps, err := fw.RespectsWhitelist(wl)
+	actual, ipps, err := fw.RespectsAllowlist(wl)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,8 +139,8 @@ func doFirewallRuleWhitelistTest(
 	}
 }
 
-func TestFirewallRuleRespectsWhitelistNAWithPortMap(t *testing.T) {
-	wl := FirewallWhitelist{
+func TestFirewallRuleRespectsAllowlistNAWithPortMap(t *testing.T) {
+	wl := FirewallAllowlist{
 		AllPorts: createIPs("10.0.0.0"),
 		PortMap: map[string][]AzureIPv4{
 			"1337": createIPs("10.0.0.0"),
@@ -153,11 +153,11 @@ func TestFirewallRuleRespectsWhitelistNAWithPortMap(t *testing.T) {
 			AllowsAllAzure: BoolTrue,
 		},
 	}
-	doFirewallRuleWhitelistTest(t, wl, rules, BoolNotApplicable, nil)
+	doFirewallRuleAllowlistTest(t, wl, rules, BoolNotApplicable, nil)
 }
 
-func TestFirewallRuleRespectsWhitelistRespects(t *testing.T) {
-	wl := FirewallWhitelist{
+func TestFirewallRuleRespectsAllowlistRespects(t *testing.T) {
+	wl := FirewallAllowlist{
 		AllPorts: []AzureIPv4{
 			NewAzureIPv4FromAzure("10.0.0.0/8"),
 		},
@@ -174,11 +174,11 @@ func TestFirewallRuleRespectsWhitelistRespects(t *testing.T) {
 			AllowsAllAzure: BoolFalse,
 		},
 	}
-	doFirewallRuleWhitelistTest(t, wl, rules, BoolTrue, nil)
+	doFirewallRuleAllowlistTest(t, wl, rules, BoolTrue, nil)
 }
 
-func TestFirewallRuleRespectsWhitelistDoesntRespect(t *testing.T) {
-	wl := FirewallWhitelist{
+func TestFirewallRuleRespectsAllowlistDoesntRespect(t *testing.T) {
+	wl := FirewallAllowlist{
 		AllPorts: []AzureIPv4{
 			NewAzureIPv4FromAzure("10.0.0.0/8"),
 		},
@@ -201,5 +201,5 @@ func TestFirewallRuleRespectsWhitelistDoesntRespect(t *testing.T) {
 			Port: NewPortFromAzure("*"),
 		},
 	}
-	doFirewallRuleWhitelistTest(t, wl, rules, BoolFalse, allowed)
+	doFirewallRuleAllowlistTest(t, wl, rules, BoolFalse, allowed)
 }

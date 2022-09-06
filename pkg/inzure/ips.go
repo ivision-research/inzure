@@ -387,14 +387,14 @@ func (ipc IPCollection) AllowsIPToPort(ip AzureIPv4, port AzurePort) (UnknownBoo
 	return ipc.AllowsIP(ip)
 }
 
-// RespectsWhitelist in the context of an IPCollection will return false if the
+// RespectsAllowlist in the context of an IPCollection will return false if the
 // collection is empty. Otherwise it checks if the list it has is a subset of
 // the given list. If it is given a nil list it returns the same as it would an.
 // empty list, which is BoolTrue
-func (ipc IPCollection) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (ipc IPCollection) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil

@@ -2,17 +2,12 @@ package inzure
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/azure-sdk-for-go/services/classic/management/storageservice"
-	storagemgmt "github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-11-01/storage"
-	"github.com/Azure/azure-sdk-for-go/storage"
-	"github.com/Azure/go-autorest/autorest/azure"
 )
-
-//go:generate stringer -type ContainerPermission
 
 // ContainerPermission is the read permission on the container
 type ContainerPermission uint8
@@ -59,62 +54,98 @@ var (
 func init() {
 	envName := os.Getenv("AZURE_ENVIRONMENT")
 	if envName != "" {
-		env, err := azure.EnvironmentFromName(envName)
-		if err != nil {
-			panic(fmt.Sprintf("Tried to set AZURE_ENVIRONMENT to a bad string: %s", envName))
-		}
 		// TODO: Note only PublicCloud and ChinaCloud are confirmed to be correct
 		// here.
-		switch env.Name {
-		case "AzurePublicCloud":
+		switch envName {
+		case "AZUREPUBLICCLOUD":
 			blobURLFmt = "https://%s.blob.core.windows.net/%s"
-		case "AzureUSGovernmentCloud":
+		case "AZUREUSGOVERNMENTCLOUD":
 			blobURLFmt = "https://%s.blob.core.usgovcloudapi.net/%s"
-		case "AzureChinaCloud":
+		case "AZURECHINACLOUD":
 			blobURLFmt = "https://%s.blob.core.chinacloudapi.cn/%s"
-		case "AzureGermanCloud":
+		case "AZUREGERMANCLOUD":
 			blobURLFmt = "https://%s.blob.core.cloudapi.de/%s"
 		default:
-			panic(fmt.Sprintf("Unrecognized environment: %s", env.Name))
+			fmt.Fprintln(os.Stderr, "[WARNING] Unrecognized environment in AZURE_ENVIRONMENT", envName)
+			blobURLFmt = "https://%s.blob.core.windows.net/%s"
 		}
 	} else {
 		blobURLFmt = "https://%s.blob.core.windows.net/%s"
 	}
 }
 
-func containerAccessFromAzure(az storage.ContainerAccessType) ContainerPermission {
-	switch az {
-	case storage.ContainerAccessTypePrivate:
-		return ContainerAccessPrivate
-	case storage.ContainerAccessTypeBlob:
-		return ContainerAccessBlob
-	case storage.ContainerAccessTypeContainer:
-		return ContainerAccessContainer
+func (cp *ContainerPermission) FromAzure(az *armstorage.PublicAccess) {
+	if az == nil {
+		// TODO this might default to private if unset, so check here?
+		*cp = ContainerAccessUnknown
+		return
+	}
+	switch *az {
+	case armstorage.PublicAccessContainer:
+		*cp = ContainerAccessContainer
+	case armstorage.PublicAccessBlob:
+		*cp = ContainerAccessBlob
+	case armstorage.PublicAccessNone:
+		*cp = ContainerAccessPrivate
 	default:
-		return ContainerAccessUnknown
+		*cp = ContainerAccessUnknown
 	}
 }
+
+type StorageKeySource uint8
+
+const (
+	// StorageKeySourceUnknown is a place holder for an unknown source
+	StorageKeySourceUnknown StorageKeySource = iota
+
+	StorageKeySourceStorage
+
+	StorageKeySourceKeyVault
+)
 
 // StorageEncryption specifies which services are encrypted in the storage
 // account
 type StorageEncryption struct {
-	Queue UnknownBool
-	File  UnknownBool
-	Blob  UnknownBool
-	Table UnknownBool
+	KeySource StorageKeySource
+	Queue     UnknownBool
+	File      UnknownBool
+	Blob      UnknownBool
+	Table     UnknownBool
 }
 
-func (se *StorageEncryption) FromAzure(enc *storagemgmt.Encryption) {
-	if enc == nil || enc.Services == nil {
+func (se *StorageEncryption) FromAzure(enc *armstorage.Encryption) {
+	if enc == nil {
+		se.KeySource = StorageKeySourceUnknown
 		se.Queue = BoolFalse
 		se.File = BoolFalse
 		se.Blob = BoolFalse
 		se.Table = BoolFalse
-	} else {
+		return
+	}
+
+	if enc.Services != nil {
 		se.Blob = unknownFromBool(enc.Services.Blob != nil)
 		se.File = unknownFromBool(enc.Services.File != nil)
 		se.Table = unknownFromBool(enc.Services.Table != nil)
 		se.Queue = unknownFromBool(enc.Services.Queue != nil)
+	} else {
+		se.Queue = BoolFalse
+		se.File = BoolFalse
+		se.Blob = BoolFalse
+		se.Table = BoolFalse
+	}
+
+	if enc.KeySource != nil {
+		switch *enc.KeySource {
+		case armstorage.KeySourceMicrosoftKeyvault:
+			se.KeySource = StorageKeySourceKeyVault
+		case armstorage.KeySourceMicrosoftStorage:
+			se.KeySource = StorageKeySourceStorage
+		default:
+			se.KeySource = StorageKeySourceUnknown
+		}
+	} else {
+		se.KeySource = StorageKeySourceUnknown
 	}
 }
 
@@ -122,95 +153,103 @@ func (se *StorageEncryption) FromAzure(enc *storagemgmt.Encryption) {
 // with the given account.
 //
 // This type is intended to contain information about both classical and
-// managed storage accounts.
+// managed storage accounts. Classical storage accounts may have less
+// information and they've been deprecated by Azure for a LONG time.
 type StorageAccount struct {
-	Meta         ResourceID
-	IsClassic    bool
-	CustomDomain string
-	Encryption   StorageEncryption
-	HTTPSOnly    UnknownBool
-	Containers   []Container
+	Meta          ResourceID
+	IsClassic     bool
+	CustomDomain  string
+	Encryption    StorageEncryption
+	HTTPSOnly     UnknownBool
+	MinTLSVersion TLSVersion
+
+	Containers []Container
+	FileShares []FileShare
 
 	key string
 }
 
-// GetClient attempts to return a client for the account. It tries to ensure
-// that the client has a READ ONLY view of the account as well. The client
-// is only valid for 30 minutes.
-func (sa *StorageAccount) GetClient() (cl storage.Client, err error) {
-	var env azure.Environment
-	env, err = getAzureEnv()
-	if err != nil {
-		return
+func NewEmptyStorageAccount() *StorageAccount {
+	return &StorageAccount{
+		Containers: make([]Container, 0),
+		FileShares: make([]FileShare, 0),
 	}
-	opts := storage.AccountSASTokenOptions{
-		Services: storage.Services{
-			Blob:  true,
-			Queue: true,
-			Table: true,
-			File:  true,
-		},
-		ResourceTypes: storage.ResourceTypes{
-			Service:   true,
-			Container: true,
-			Object:    true,
-		},
-		Permissions: storage.Permissions{
-			Read:    true,
-			List:    true,
-			Process: false,
-			Write:   false,
-			Delete:  false,
-			Add:     false,
-			Create:  false,
-			Update:  false,
-		},
-		UseHTTPS:   true,
-		Start:      time.Now(),
-		Expiry:     time.Now().Add(30 * time.Minute),
-		APIVersion: storage.DefaultAPIVersion,
-	}
-	var tcl storage.Client
-	tcl, err = storage.NewBasicClientOnSovereignCloud(
-		sa.Meta.Name, sa.key, env,
-	)
-	if err != nil {
-		return
-	}
-	var vals url.Values
-	vals, err = tcl.GetAccountSASToken(opts)
-	if err != nil {
-		return
-	}
-	cl = storage.NewAccountSASClient(
-		sa.Meta.Name, vals, env,
-	)
-	return
 }
 
-type genericAccessPolicy struct {
-	ID         string
-	StartTime  time.Time
-	ExpiryTime time.Time
-	CanRead    bool
+type FileShareProtocol uint8
+
+const (
+	FileShareProtocolUnknown FileShareProtocol = iota
+	FileShareProtocolNFS
+	FileShareProtocolSMB
+)
+
+type FileShareAccessPolicy struct {
+	ID          string
+	StartTime   time.Time
+	ExpiryTime  time.Time
+	Permissions string
 }
 
-// ContainerAccessPolicy is a direct clone of Azure's type of the same name
-// documented here:
-// https://godoc.org/github.com/Azure/azure-sdk-for-go/storage#ContainerAccessPolicy
-type ContainerAccessPolicy struct {
-	genericAccessPolicy
-	CanWrite  bool
-	CanDelete bool
+func (fsap *FileShareAccessPolicy) FromAzure(az *armstorage.SignedIdentifier) {
+	gValFromPtr(&fsap.ID, az.ID)
+	pol := az.AccessPolicy
+	if pol != nil {
+		gValFromPtr(&fsap.Permissions, pol.Permission)
+		gValFromPtr(&fsap.StartTime, pol.StartTime)
+		gValFromPtr(&fsap.ExpiryTime, pol.ExpiryTime)
+	}
 }
 
-func (c *ContainerAccessPolicy) FromAzure(ap *storage.ContainerAccessPolicy) {
-	c.ID = ap.ID
-	c.StartTime = ap.StartTime
-	c.ExpiryTime = ap.ExpiryTime
-	c.CanRead = ap.CanRead
-	c.CanWrite = ap.CanWrite
-	c.CanDelete = ap.CanDelete
+func (fsp *FileShareProtocol) FromAzure(az *armstorage.EnabledProtocols) {
+	if az == nil {
+		*fsp = FileShareProtocolUnknown
+		return
+	}
+	switch *az {
+	case armstorage.EnabledProtocolsNFS:
+		*fsp = FileShareProtocolNFS
+	case armstorage.EnabledProtocolsSMB:
+		*fsp = FileShareProtocolSMB
+	default:
+		*fsp = FileShareProtocolUnknown
+	}
+}
+
+type FileShare struct {
+	Name           string
+	StorageAccount ResourceID
+	Type           string
+	Protocol       FileShareProtocol
+	Deleted        UnknownBool
+	AccessPolicies []FileShareAccessPolicy
+}
+
+func (f *FileShare) QueryString() string {
+	sa, err := f.StorageAccount.QueryString()
+	if err != nil {
+		return ""
+	}
+	return sa + "/FileShares/" + f.Name
+}
+
+func (f *FileShare) FromAzure(az *armstorage.FileShareItem) {
+	gValFromPtr(&f.Name, az.Name)
+	gValFromPtr(&f.Type, az.Type)
+	props := az.Properties
+	if props != nil {
+		if props.Deleted == nil {
+			f.Deleted = BoolFalse
+		} else {
+			f.Deleted.FromBool(*props.Deleted)
+		}
+		gValFromPtrFromAzure(&f.Protocol, props.EnabledProtocols)
+		gSliceFromPtrSetterPtrs(
+			&f.AccessPolicies,
+			&props.SignedIdentifiers,
+			fromAzureSetter[armstorage.SignedIdentifier, *FileShareAccessPolicy],
+		)
+	}
 }
 
 type Container struct {
@@ -218,7 +257,6 @@ type Container struct {
 	StorageAccount ResourceID
 	URL            string
 	Access         ContainerPermission
-	AccessPolicies []ContainerAccessPolicy
 }
 
 func (c *Container) QueryString() string {
@@ -229,22 +267,11 @@ func (c *Container) QueryString() string {
 	return sa + "/Containers/" + c.Name
 }
 
-func (c *Container) FromAzure(az *storage.Container) {
-	c.Name = az.Name
-	c.Access = containerAccessFromAzure(az.Properties.PublicAccess)
-	if c.AccessPolicies == nil {
-		c.AccessPolicies = make([]ContainerAccessPolicy, 0)
-	}
-}
-
-func (c *Container) permsFromAzure(perm *storage.ContainerPermissions) {
-	if perm.AccessPolicies == nil {
-		return
-	}
-	for _, ap := range perm.AccessPolicies {
-		var cap ContainerAccessPolicy
-		cap.FromAzure(&ap)
-		c.AccessPolicies = append(c.AccessPolicies, cap)
+func (c *Container) FromAzure(az *armstorage.ListContainerItem) {
+	gValFromPtr(&c.Name, az.Name)
+	props := az.Properties
+	if props != nil {
+		gValFromPtrFromAzure(&c.Access, props.PublicAccess)
 	}
 }
 
@@ -255,21 +282,18 @@ func (c *Container) SetURL(sa *StorageAccount) {
 
 // Queue TODO
 
-func (sa *StorageAccount) FromAzure(acc storagemgmt.Account) {
+func (sa *StorageAccount) FromAzure(acc *armstorage.Account) {
 	sa.Meta.setupEmpty()
 	if acc.ID != nil {
 		sa.Meta.fromID(*acc.ID)
 	}
-	if acc.AccountProperties != nil {
-		sa.Encryption.FromAzure(acc.AccountProperties.Encryption)
-		if acc.AccountProperties.EnableHTTPSTrafficOnly != nil {
-			sa.HTTPSOnly = unknownFromBool(*acc.AccountProperties.EnableHTTPSTrafficOnly)
-		} else {
-			sa.HTTPSOnly = BoolFalse
-		}
-		cd := acc.AccountProperties.CustomDomain
+	if acc.Properties != nil {
+		sa.MinTLSVersion.FromAzureStorage(acc.Properties.MinimumTLSVersion)
+		sa.Encryption.FromAzure(acc.Properties.Encryption)
+		sa.HTTPSOnly.FromBoolPtr(acc.Properties.EnableHTTPSTrafficOnly)
+		cd := acc.Properties.CustomDomain
 		if cd != nil {
-			valFromPtr(&sa.CustomDomain, cd.Name)
+			gValFromPtr(&sa.CustomDomain, cd.Name)
 		}
 	}
 	sa.Containers = make([]Container, 0)

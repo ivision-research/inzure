@@ -3,7 +3,7 @@ package inzure
 import (
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/keyvault/mgmt/2018-02-14/keyvault"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
 )
 
 type KeyVault struct {
@@ -29,7 +29,7 @@ func NewEmptyKeyVault() *KeyVault {
 	}
 }
 
-func (kv *KeyVault) FromAzure(az *keyvault.Vault) {
+func (kv *KeyVault) FromAzure(az *armkeyvault.Vault) {
 	if az.ID == nil {
 		return
 	}
@@ -38,18 +38,18 @@ func (kv *KeyVault) FromAzure(az *keyvault.Vault) {
 	if props == nil {
 		return
 	}
-	valFromPtr(&kv.URL, props.VaultURI)
+	gValFromPtr(&kv.URL, props.VaultURI)
 	kv.EnabledForDeployment.FromBoolPtr(props.EnabledForDeployment)
 	kv.EnabledForTemplateDeployment.FromBoolPtr(props.EnabledForTemplateDeployment)
 	kv.EnabledForDiskEncryption.FromBoolPtr(props.EnabledForDiskEncryption)
 	if props.AccessPolicies != nil {
-		aps := *props.AccessPolicies
+		aps := props.AccessPolicies
 		kv.AccessPolicies = make([]KeyVaultAccessPolicy, len(aps))
 		for i, ap := range aps {
-			kv.AccessPolicies[i].FromAzure(&ap)
+			kv.AccessPolicies[i].FromAzure(ap)
 		}
 	}
-	kv.Firewall.FromAzure(props.NetworkAcls)
+	kv.Firewall.FromAzure(props.NetworkACLs)
 }
 
 type KeyVaultFirewall struct {
@@ -58,19 +58,17 @@ type KeyVaultFirewall struct {
 	VNetRules    []ResourceID
 }
 
-func (kvf *KeyVaultFirewall) FromAzure(az *keyvault.NetworkRuleSet) {
+func (kvf *KeyVaultFirewall) FromAzure(az *armkeyvault.NetworkRuleSet) {
 	// Given no rules we are letting all traffic in by default
 	if az == nil {
 		kvf.DefaultAllow = BoolTrue
 		return
 	}
-	dAct := strings.ToLower(string(az.DefaultAction))
-	// Pretty sure this is the case.
-	kvf.DefaultAllow.FromBool(dAct == "allow")
-	if az.IPRules != nil {
-		azIps := *az.IPRules
-		kvf.IPRules = make([]AzureIPv4, 0, len(azIps))
-		for _, ip := range azIps {
+	kvf.DefaultAllow = ubFromRhsPtr(armkeyvault.NetworkRuleActionAllow, az.DefaultAction)
+
+	if az.IPRules != nil && len(az.IPRules) > 0 {
+		kvf.IPRules = make([]AzureIPv4, 0, len(az.IPRules))
+		for _, ip := range az.IPRules {
 			if ip.Value == nil {
 				continue
 			}
@@ -78,10 +76,10 @@ func (kvf *KeyVaultFirewall) FromAzure(az *keyvault.NetworkRuleSet) {
 		}
 	}
 
-	if az.VirtualNetworkRules != nil {
-		azVnets := *az.VirtualNetworkRules
-		kvf.VNetRules = make([]ResourceID, 0, len(azVnets))
-		for _, vnet := range azVnets {
+	vnr := az.VirtualNetworkRules
+	if vnr != nil && len(vnr) > 0 {
+		kvf.VNetRules = make([]ResourceID, 0, len(vnr))
+		for _, vnet := range vnr {
 			if vnet.ID == nil {
 				return
 			}
@@ -105,7 +103,7 @@ func (kvf KeyVaultFirewall) AllowsIP(chk AzureIPv4) (UnknownBool, []PacketRoute,
 	if kvf.DefaultAllow.True() {
 		return BoolTrue, []PacketRoute{AllowsAllPacketRoute()}, nil
 	}
-	// Similar to RespectsWhitelist, we have to do a bit of work here
+	// Similar to RespectsAllowlist, we have to do a bit of work here
 	if len(kvf.IPRules) == 0 {
 		if len(kvf.VNetRules) != 0 {
 			return BoolUnknown, nil, nil
@@ -135,7 +133,7 @@ func (kvf KeyVaultFirewall) AllowsIPToPort(ip AzureIPv4, _ AzurePort) (UnknownBo
 	return kvf.AllowsIP(ip)
 }
 
-func (kvf KeyVaultFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (kvf KeyVaultFirewall) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	if kvf.DefaultAllow.True() {
 		return BoolFalse, []IPPort{{
 			IP:   NewAzureIPv4FromAzure("*"),
@@ -143,7 +141,7 @@ func (kvf KeyVaultFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool
 		}}, nil
 	}
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil
@@ -201,18 +199,15 @@ type KeyVaultAccessPolicy struct {
 	Key           KeyVaultKeysPermission
 }
 
-func (kva *KeyVaultAccessPolicy) FromAzure(az *keyvault.AccessPolicyEntry) {
-	if az.TenantID != nil {
-		kva.TenantID = az.TenantID.String()
-	}
-	valFromPtr(&kva.ObjectID, az.ObjectID)
-	if az.ApplicationID != nil {
-		kva.ApplicationID = az.ApplicationID.String()
-	}
+func (kva *KeyVaultAccessPolicy) FromAzure(az *armkeyvault.AccessPolicyEntry) {
+	gValFromPtr(&kva.TenantID, az.TenantID)
+	gValFromPtr(&kva.ObjectID, az.ObjectID)
+	gValFromPtr(&kva.ApplicationID, az.ApplicationID)
 	perms := az.Permissions
 	if perms == nil {
 		return
 	}
+
 	kva.Storage.FromAzure(perms.Storage)
 	kva.Cert.FromAzure(perms.Certificates)
 	kva.Key.FromAzure(perms.Keys)
@@ -242,30 +237,33 @@ const (
 )
 
 var (
-	keyvaultNormalizedKeyPermissionsBackup    = strings.ToLower(string(keyvault.KeyPermissionsBackup))
-	keyvaultNormalizedKeyPermissionsCreate    = strings.ToLower(string(keyvault.KeyPermissionsCreate))
-	keyvaultNormalizedKeyPermissionsDecrypt   = strings.ToLower(string(keyvault.KeyPermissionsDecrypt))
-	keyvaultNormalizedKeyPermissionsDelete    = strings.ToLower(string(keyvault.KeyPermissionsDelete))
-	keyvaultNormalizedKeyPermissionsEncrypt   = strings.ToLower(string(keyvault.KeyPermissionsEncrypt))
-	keyvaultNormalizedKeyPermissionsGet       = strings.ToLower(string(keyvault.KeyPermissionsGet))
-	keyvaultNormalizedKeyPermissionsImport    = strings.ToLower(string(keyvault.KeyPermissionsImport))
-	keyvaultNormalizedKeyPermissionsList      = strings.ToLower(string(keyvault.KeyPermissionsList))
-	keyvaultNormalizedKeyPermissionsPurge     = strings.ToLower(string(keyvault.KeyPermissionsPurge))
-	keyvaultNormalizedKeyPermissionsRecover   = strings.ToLower(string(keyvault.KeyPermissionsRecover))
-	keyvaultNormalizedKeyPermissionsRestore   = strings.ToLower(string(keyvault.KeyPermissionsRestore))
-	keyvaultNormalizedKeyPermissionsSign      = strings.ToLower(string(keyvault.KeyPermissionsSign))
-	keyvaultNormalizedKeyPermissionsUnwrapKey = strings.ToLower(string(keyvault.KeyPermissionsUnwrapKey))
-	keyvaultNormalizedKeyPermissionsUpdate    = strings.ToLower(string(keyvault.KeyPermissionsUpdate))
-	keyvaultNormalizedKeyPermissionsVerify    = strings.ToLower(string(keyvault.KeyPermissionsVerify))
-	keyvaultNormalizedKeyPermissionsWrapKey   = strings.ToLower(string(keyvault.KeyPermissionsWrapKey))
+	keyvaultNormalizedKeyPermissionsBackup    = strings.ToLower(string(armkeyvault.KeyPermissionsBackup))
+	keyvaultNormalizedKeyPermissionsCreate    = strings.ToLower(string(armkeyvault.KeyPermissionsCreate))
+	keyvaultNormalizedKeyPermissionsDecrypt   = strings.ToLower(string(armkeyvault.KeyPermissionsDecrypt))
+	keyvaultNormalizedKeyPermissionsDelete    = strings.ToLower(string(armkeyvault.KeyPermissionsDelete))
+	keyvaultNormalizedKeyPermissionsEncrypt   = strings.ToLower(string(armkeyvault.KeyPermissionsEncrypt))
+	keyvaultNormalizedKeyPermissionsGet       = strings.ToLower(string(armkeyvault.KeyPermissionsGet))
+	keyvaultNormalizedKeyPermissionsImport    = strings.ToLower(string(armkeyvault.KeyPermissionsImport))
+	keyvaultNormalizedKeyPermissionsList      = strings.ToLower(string(armkeyvault.KeyPermissionsList))
+	keyvaultNormalizedKeyPermissionsPurge     = strings.ToLower(string(armkeyvault.KeyPermissionsPurge))
+	keyvaultNormalizedKeyPermissionsRecover   = strings.ToLower(string(armkeyvault.KeyPermissionsRecover))
+	keyvaultNormalizedKeyPermissionsRestore   = strings.ToLower(string(armkeyvault.KeyPermissionsRestore))
+	keyvaultNormalizedKeyPermissionsSign      = strings.ToLower(string(armkeyvault.KeyPermissionsSign))
+	keyvaultNormalizedKeyPermissionsUnwrapKey = strings.ToLower(string(armkeyvault.KeyPermissionsUnwrapKey))
+	keyvaultNormalizedKeyPermissionsUpdate    = strings.ToLower(string(armkeyvault.KeyPermissionsUpdate))
+	keyvaultNormalizedKeyPermissionsVerify    = strings.ToLower(string(armkeyvault.KeyPermissionsVerify))
+	keyvaultNormalizedKeyPermissionsWrapKey   = strings.ToLower(string(armkeyvault.KeyPermissionsWrapKey))
 )
 
-func (p *KeyVaultKeysPermission) FromAzure(az *[]keyvault.KeyPermissions) {
+func (p *KeyVaultKeysPermission) FromAzure(az []*armkeyvault.KeyPermissions) {
 	if az == nil {
 		return
 	}
-	for _, azp := range *az {
-		switch strings.ToLower(string(azp)) {
+	for _, azp := range az {
+		if azp == nil {
+			continue
+		}
+		switch strings.ToLower(string(*azp)) {
 		case keyvaultNormalizedKeyPermissionsBackup:
 			*p |= KeyVaultKeyPermissionsBackup
 		case keyvaultNormalizedKeyPermissionsCreate:
@@ -317,22 +315,25 @@ const (
 )
 
 var (
-	keyvaultNormalizedSecretPermissionsBackup  = strings.ToLower(string(keyvault.SecretPermissionsBackup))
-	keyvaultNormalizedSecretPermissionsDelete  = strings.ToLower(string(keyvault.SecretPermissionsDelete))
-	keyvaultNormalizedSecretPermissionsGet     = strings.ToLower(string(keyvault.SecretPermissionsGet))
-	keyvaultNormalizedSecretPermissionsList    = strings.ToLower(string(keyvault.SecretPermissionsList))
-	keyvaultNormalizedSecretPermissionsPurge   = strings.ToLower(string(keyvault.SecretPermissionsPurge))
-	keyvaultNormalizedSecretPermissionsRecover = strings.ToLower(string(keyvault.SecretPermissionsRecover))
-	keyvaultNormalizedSecretPermissionsRestore = strings.ToLower(string(keyvault.SecretPermissionsRestore))
-	keyvaultNormalizedSecretPermissionsSet     = strings.ToLower(string(keyvault.SecretPermissionsSet))
+	keyvaultNormalizedSecretPermissionsBackup  = strings.ToLower(string(armkeyvault.SecretPermissionsBackup))
+	keyvaultNormalizedSecretPermissionsDelete  = strings.ToLower(string(armkeyvault.SecretPermissionsDelete))
+	keyvaultNormalizedSecretPermissionsGet     = strings.ToLower(string(armkeyvault.SecretPermissionsGet))
+	keyvaultNormalizedSecretPermissionsList    = strings.ToLower(string(armkeyvault.SecretPermissionsList))
+	keyvaultNormalizedSecretPermissionsPurge   = strings.ToLower(string(armkeyvault.SecretPermissionsPurge))
+	keyvaultNormalizedSecretPermissionsRecover = strings.ToLower(string(armkeyvault.SecretPermissionsRecover))
+	keyvaultNormalizedSecretPermissionsRestore = strings.ToLower(string(armkeyvault.SecretPermissionsRestore))
+	keyvaultNormalizedSecretPermissionsSet     = strings.ToLower(string(armkeyvault.SecretPermissionsSet))
 )
 
-func (p *KeyVaultSecretsPermission) FromAzure(az *[]keyvault.SecretPermissions) {
+func (p *KeyVaultSecretsPermission) FromAzure(az []*armkeyvault.SecretPermissions) {
 	if az == nil {
 		return
 	}
-	for _, azp := range *az {
-		switch strings.ToLower(string(azp)) {
+	for _, azp := range az {
+		if azp == nil {
+			continue
+		}
+		switch strings.ToLower(string(*azp)) {
 		case keyvaultNormalizedSecretPermissionsBackup:
 			*p |= KeyVaultSecretPermissionsBackup
 		case keyvaultNormalizedSecretPermissionsDelete:
@@ -377,30 +378,33 @@ const (
 )
 
 var (
-	keyvaultNormalizedBackup         = strings.ToLower(string(keyvault.Backup))
-	keyvaultNormalizedCreate         = strings.ToLower(string(keyvault.Create))
-	keyvaultNormalizedDelete         = strings.ToLower(string(keyvault.Delete))
-	keyvaultNormalizedDeleteissuers  = strings.ToLower(string(keyvault.Deleteissuers))
-	keyvaultNormalizedGet            = strings.ToLower(string(keyvault.Get))
-	keyvaultNormalizedGetissuers     = strings.ToLower(string(keyvault.Getissuers))
-	keyvaultNormalizedImport         = strings.ToLower(string(keyvault.Import))
-	keyvaultNormalizedList           = strings.ToLower(string(keyvault.List))
-	keyvaultNormalizedListissuers    = strings.ToLower(string(keyvault.Listissuers))
-	keyvaultNormalizedManagecontacts = strings.ToLower(string(keyvault.Managecontacts))
-	keyvaultNormalizedManageissuers  = strings.ToLower(string(keyvault.Manageissuers))
-	keyvaultNormalizedPurge          = strings.ToLower(string(keyvault.Purge))
-	keyvaultNormalizedRecover        = strings.ToLower(string(keyvault.Recover))
-	keyvaultNormalizedRestore        = strings.ToLower(string(keyvault.Restore))
-	keyvaultNormalizedSetissuers     = strings.ToLower(string(keyvault.Setissuers))
-	keyvaultNormalizedUpdate         = strings.ToLower(string(keyvault.Update))
+	keyvaultNormalizedBackup         = strings.ToLower(string(armkeyvault.CertificatePermissionsBackup))
+	keyvaultNormalizedCreate         = strings.ToLower(string(armkeyvault.CertificatePermissionsCreate))
+	keyvaultNormalizedDelete         = strings.ToLower(string(armkeyvault.CertificatePermissionsDelete))
+	keyvaultNormalizedDeleteissuers  = strings.ToLower(string(armkeyvault.CertificatePermissionsDeleteissuers))
+	keyvaultNormalizedGet            = strings.ToLower(string(armkeyvault.CertificatePermissionsGet))
+	keyvaultNormalizedGetissuers     = strings.ToLower(string(armkeyvault.CertificatePermissionsGetissuers))
+	keyvaultNormalizedImport         = strings.ToLower(string(armkeyvault.CertificatePermissionsImport))
+	keyvaultNormalizedList           = strings.ToLower(string(armkeyvault.CertificatePermissionsList))
+	keyvaultNormalizedListissuers    = strings.ToLower(string(armkeyvault.CertificatePermissionsListissuers))
+	keyvaultNormalizedManagecontacts = strings.ToLower(string(armkeyvault.CertificatePermissionsManagecontacts))
+	keyvaultNormalizedManageissuers  = strings.ToLower(string(armkeyvault.CertificatePermissionsManageissuers))
+	keyvaultNormalizedPurge          = strings.ToLower(string(armkeyvault.CertificatePermissionsPurge))
+	keyvaultNormalizedRecover        = strings.ToLower(string(armkeyvault.CertificatePermissionsRecover))
+	keyvaultNormalizedRestore        = strings.ToLower(string(armkeyvault.CertificatePermissionsRestore))
+	keyvaultNormalizedSetissuers     = strings.ToLower(string(armkeyvault.CertificatePermissionsSetissuers))
+	keyvaultNormalizedUpdate         = strings.ToLower(string(armkeyvault.CertificatePermissionsUpdate))
 )
 
-func (p *KeyVaultCertificatesPermission) FromAzure(az *[]keyvault.CertificatePermissions) {
+func (p *KeyVaultCertificatesPermission) FromAzure(az []*armkeyvault.CertificatePermissions) {
 	if az == nil {
 		return
 	}
-	for _, azp := range *az {
-		switch strings.ToLower(string(azp)) {
+	for _, azp := range az {
+		if azp == nil {
+			continue
+		}
+		switch strings.ToLower(string(*azp)) {
 		case keyvaultNormalizedBackup:
 			*p |= KeyVaultCertificateBackup
 		case keyvaultNormalizedCreate:
@@ -459,28 +463,31 @@ const (
 )
 
 var (
-	keyvaultNormalizedStoragePermissionsBackup        = strings.ToLower(string(keyvault.StoragePermissionsBackup))
-	keyvaultNormalizedStoragePermissionsDelete        = strings.ToLower(string(keyvault.StoragePermissionsDelete))
-	keyvaultNormalizedStoragePermissionsDeletesas     = strings.ToLower(string(keyvault.StoragePermissionsDeletesas))
-	keyvaultNormalizedStoragePermissionsGet           = strings.ToLower(string(keyvault.StoragePermissionsGet))
-	keyvaultNormalizedStoragePermissionsGetsas        = strings.ToLower(string(keyvault.StoragePermissionsGetsas))
-	keyvaultNormalizedStoragePermissionsList          = strings.ToLower(string(keyvault.StoragePermissionsList))
-	keyvaultNormalizedStoragePermissionsListsas       = strings.ToLower(string(keyvault.StoragePermissionsListsas))
-	keyvaultNormalizedStoragePermissionsPurge         = strings.ToLower(string(keyvault.StoragePermissionsPurge))
-	keyvaultNormalizedStoragePermissionsRecover       = strings.ToLower(string(keyvault.StoragePermissionsRecover))
-	keyvaultNormalizedStoragePermissionsRegeneratekey = strings.ToLower(string(keyvault.StoragePermissionsRegeneratekey))
-	keyvaultNormalizedStoragePermissionsRestore       = strings.ToLower(string(keyvault.StoragePermissionsRestore))
-	keyvaultNormalizedStoragePermissionsSet           = strings.ToLower(string(keyvault.StoragePermissionsSet))
-	keyvaultNormalizedStoragePermissionsSetsas        = strings.ToLower(string(keyvault.StoragePermissionsSetsas))
-	keyvaultNormalizedStoragePermissionsUpdate        = strings.ToLower(string(keyvault.StoragePermissionsUpdate))
+	keyvaultNormalizedStoragePermissionsBackup        = strings.ToLower(string(armkeyvault.StoragePermissionsBackup))
+	keyvaultNormalizedStoragePermissionsDelete        = strings.ToLower(string(armkeyvault.StoragePermissionsDelete))
+	keyvaultNormalizedStoragePermissionsDeletesas     = strings.ToLower(string(armkeyvault.StoragePermissionsDeletesas))
+	keyvaultNormalizedStoragePermissionsGet           = strings.ToLower(string(armkeyvault.StoragePermissionsGet))
+	keyvaultNormalizedStoragePermissionsGetsas        = strings.ToLower(string(armkeyvault.StoragePermissionsGetsas))
+	keyvaultNormalizedStoragePermissionsList          = strings.ToLower(string(armkeyvault.StoragePermissionsList))
+	keyvaultNormalizedStoragePermissionsListsas       = strings.ToLower(string(armkeyvault.StoragePermissionsListsas))
+	keyvaultNormalizedStoragePermissionsPurge         = strings.ToLower(string(armkeyvault.StoragePermissionsPurge))
+	keyvaultNormalizedStoragePermissionsRecover       = strings.ToLower(string(armkeyvault.StoragePermissionsRecover))
+	keyvaultNormalizedStoragePermissionsRegeneratekey = strings.ToLower(string(armkeyvault.StoragePermissionsRegeneratekey))
+	keyvaultNormalizedStoragePermissionsRestore       = strings.ToLower(string(armkeyvault.StoragePermissionsRestore))
+	keyvaultNormalizedStoragePermissionsSet           = strings.ToLower(string(armkeyvault.StoragePermissionsSet))
+	keyvaultNormalizedStoragePermissionsSetsas        = strings.ToLower(string(armkeyvault.StoragePermissionsSetsas))
+	keyvaultNormalizedStoragePermissionsUpdate        = strings.ToLower(string(armkeyvault.StoragePermissionsUpdate))
 )
 
-func (p *KeyVaultStoragePermission) FromAzure(az *[]keyvault.StoragePermissions) {
+func (p *KeyVaultStoragePermission) FromAzure(az []*armkeyvault.StoragePermissions) {
 	if az == nil {
 		return
 	}
-	for _, azp := range *az {
-		switch strings.ToLower(string(azp)) {
+	for _, azp := range az {
+		if azp == nil {
+			continue
+		}
+		switch strings.ToLower(string(*azp)) {
 		case keyvaultNormalizedStoragePermissionsBackup:
 			*p |= KeyVaultStoragePermissionBackup
 		case keyvaultNormalizedStoragePermissionsDelete:

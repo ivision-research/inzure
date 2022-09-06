@@ -107,6 +107,21 @@ func (ub *UnknownBool) FromBoolPtr(b *bool) {
 	ub.FromBool(*b)
 }
 
+func ubFromRhsPtr[T comparable](lhs T, rhs *T) UnknownBool {
+	if rhs == nil {
+		return BoolUnknown
+	}
+	return unknownFromBool(lhs == *rhs)
+}
+
+func (ub *UnknownBool) FromStringPtrEq(lhs string, rhs *string) {
+	if rhs == nil {
+		*ub = BoolUnknown
+		return
+	}
+	ub.FromBool(lhs == *rhs)
+}
+
 func ubFromString(s string) UnknownBool {
 	switch s {
 	case "BoolUnknown":
