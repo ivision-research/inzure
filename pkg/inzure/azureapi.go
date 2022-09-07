@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/advisor/mgmt/2017-04-19/advisor"
@@ -36,7 +37,16 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-const bufSize = 5
+const (
+	bufSize = 5
+
+	// TODO These should be configurable somewhere or at least let the user
+	// modify the transport as they see fit.
+	maxConnsPerHost    = 100
+	maxIdleConns       = 20
+	idleConnTimeoutSec = 5
+	minTLSVersion      = tls.VersionTLS12
+)
 
 // AzureAPI is an interface wrapper for the Azure API itself. Interaction with
 // the API only happens through this interface.
@@ -126,15 +136,8 @@ type azureImpl struct {
 	sender        autorest.Sender
 }
 
-func getClientWithTransport(transport *http.Transport) *http.Client {
+func makeClientWithTransport(transport *http.Transport) *http.Client {
 	var roundTripper http.RoundTripper = transport
-	// TODO
-	// This was copy/pasted from the Azure go-rest project but doesn't
-	// seem to work with the versions we're using.
-
-	//if tracing.IsEnabled() {
-	//	roundTripper = tracing.NewTransport(transport)
-	//}
 	j, _ := cookiejar.New(nil)
 	return &http.Client{Jar: j, Transport: roundTripper}
 
@@ -144,16 +147,37 @@ func (impl *azureImpl) ClearProxy() {
 	impl.sender = nil
 }
 
-func makeProxyTransport(dialer proxy.Dialer) *http.Transport {
+func makeDefaultTransport() *http.Transport {
 	tport := &http.Transport{
-		Proxy:                 nil,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
+		Proxy:             http.ProxyFromEnvironment,
+		ForceAttemptHTTP2: true,
+
+		MaxIdleConns:    maxIdleConns,
+		IdleConnTimeout: idleConnTimeoutSec * time.Second,
+		MaxConnsPerHost: maxConnsPerHost,
+
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
+			MinVersion: minTLSVersion,
+		},
+	}
+	return tport
+}
+
+func makeProxyTransport(dialer proxy.Dialer) *http.Transport {
+	tport := &http.Transport{
+		Proxy:             nil,
+		ForceAttemptHTTP2: true,
+
+		MaxIdleConns:    maxIdleConns,
+		IdleConnTimeout: idleConnTimeoutSec * time.Second,
+		MaxConnsPerHost: maxConnsPerHost,
+
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: minTLSVersion,
 		},
 	}
 
@@ -170,7 +194,7 @@ func (impl *azureImpl) SetProxy(dialer proxy.Dialer) {
 		return
 	}
 	transport := makeProxyTransport(dialer)
-	impl.sender = getClientWithTransport(transport)
+	impl.sender = makeClientWithTransport(transport)
 }
 
 func (impl *azureImpl) EnableClassic(key []byte, sub string) (err error) {
@@ -193,6 +217,8 @@ func sendErr(ctx context.Context, e error, ec chan<- error) {
 	}
 }
 
+var defaultClient = makeClientWithTransport(makeDefaultTransport())
+
 func (impl *azureImpl) configureClient(client *autorest.Client) {
 	client.Authorizer = impl.authorizer
 	if impl.sender != nil {
@@ -201,6 +227,20 @@ func (impl *azureImpl) configureClient(client *autorest.Client) {
 	client.UserAgent = fmt.Sprintf("inzure/%s (+https://www.github.com/CarveSystems/inzure)", LibVersion)
 	if impl.sender != nil {
 		client.Sender = impl.sender
+	} else {
+		client.Sender = defaultClient
+	}
+
+	// TODO This should be configurable?
+	client.RequestInspector = func(p autorest.Preparer) autorest.Preparer {
+		return autorest.PreparerFunc(func(r *http.Request) (*http.Request, error) {
+			r, err := p.Prepare(r)
+			if err != nil {
+				return r, err
+			}
+			r.Close = true
+			return r, err
+		})
 	}
 }
 
@@ -358,9 +398,9 @@ func (impl *azureImpl) GetAPIs(ctx context.Context, sub string, rg string, ec ch
 			}
 			for apiIt.NotDone() {
 				api := NewEmptyAPI()
-				azApi := apiIt.Value()
-				api.FromAzure(&azApi)
-				if azApi.ID == nil {
+				azAPI := apiIt.Value()
+				api.FromAzure(&azAPI)
+				if azAPI.ID == nil {
 					sendErr(innerCtx, genericError(sub,
 						ApiT, "ListAPIs",
 						errors.New("api had no ID"),
@@ -1375,6 +1415,40 @@ func (impl *azureImpl) GetContainers(ctx context.Context, sa *StorageAccount, ec
 	return c
 }
 
+var defaultAuthorizer struct {
+	authorizer autorest.Authorizer
+
+	init    sync.Once
+	initErr error
+}
+
+func authorizerFromEnv(env azure.Environment) (authorizer autorest.Authorizer, err error) {
+	// If this is defined in the environment, we're going to assume everything
+	// else needed to authenticate from the environment is.
+	if os.Getenv("AZURE_CLIENT_SECRET") != "" {
+		authorizer, err = auth.NewAuthorizerFromEnvironment()
+	} else {
+		// Otherwise we're going to assume we have to use the device token
+		// auth flow.
+		clientID := os.Getenv("AZURE_CLIENT_ID")
+		devConf := auth.NewDeviceFlowConfig(
+			clientID,
+			os.Getenv("AZURE_TENANT_ID"),
+		)
+		devConf.AADEndpoint = env.ActiveDirectoryEndpoint
+		devConf.Resource = env.ResourceManagerEndpoint
+		authorizer, err = devConf.Authorizer()
+	}
+	return
+}
+
+func getAuthorizer(env azure.Environment) (autorest.Authorizer, error) {
+	defaultAuthorizer.init.Do(func() {
+		defaultAuthorizer.authorizer, defaultAuthorizer.initErr = authorizerFromEnv(env)
+	})
+	return defaultAuthorizer.authorizer, defaultAuthorizer.initErr
+}
+
 // NewAzureAPI returns an AzureAPI instance taking the credentials it needs
 // from the environment.
 //
@@ -1419,29 +1493,11 @@ func NewAzureAPI() (AzureAPI, error) {
 		return nil, err
 	}
 
-	// If this is defined in the environment, we're going to assume everything
-	// else needed to authenticate from the environment is.
-	if os.Getenv("AZURE_CLIENT_SECRET") != "" {
-		api.authorizer, err = auth.NewAuthorizerFromEnvironment()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Otherwise we're going to assume we have to use the device token
-		// auth flow.
-		clientID := os.Getenv("AZURE_CLIENT_ID")
-		devConf := auth.NewDeviceFlowConfig(
-			clientID,
-			os.Getenv("AZURE_TENANT_ID"),
-		)
-		devConf.AADEndpoint = api.env.ActiveDirectoryEndpoint
-		devConf.Resource = api.env.ResourceManagerEndpoint
-		api.authorizer, err = devConf.Authorizer()
-
-		if err != nil {
-			return nil, err
-		}
+	authorizer, err := getAuthorizer(api.env)
+	if err != nil {
+		return nil, err
 	}
+	api.authorizer = authorizer
 	return api, nil
 }
 
