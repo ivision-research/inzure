@@ -40,8 +40,6 @@ import (
 const (
 	bufSize = 5
 
-	// TODO These should be configurable somewhere or at least let the user
-	// modify the transport as they see fit.
 	maxConnsPerHost    = 100
 	maxIdleConns       = 20
 	idleConnTimeoutSec = 5
@@ -66,12 +64,18 @@ type AzureAPI interface {
 	// the HTTP_PROXY and HTTPS_PROXY environmental variables should be supported.
 	// This can also use proxy.Direct{} to completely bypass the proxy for some
 	// calls.
+	//
+	// Note that this can't be used in combination with `SetClient`
 	SetProxy(proxy proxy.Dialer)
 
-	// Resets the proxy to the default configuration. The default proxy
+	// ClearProxy resets the proxy to the default configuration. The default proxy
 	// configuration supports the HTTP_PROXY and HTTPS_PROXY environmental
 	// variables.
 	ClearProxy()
+
+	// Setclient allows to completely customize the http.Client in use. Note that
+	// this can't be used in combination with `SetProxy`
+	SetClient(client *http.Client)
 
 	// GetResourceGroups gets all resource groups for the given subscription
 	// ResourceGroups are returned on the provided channel. They are empty
@@ -133,7 +137,9 @@ type azureImpl struct {
 	env           azure.Environment
 	classicClient management.Client
 	doClassic     bool
-	sender        autorest.Sender
+
+	proxySender bool
+	sender      autorest.Sender
 }
 
 func makeClientWithTransport(transport *http.Transport) *http.Client {
@@ -144,7 +150,10 @@ func makeClientWithTransport(transport *http.Transport) *http.Client {
 }
 
 func (impl *azureImpl) ClearProxy() {
-	impl.sender = nil
+	if impl.proxySender {
+		impl.sender = nil
+		impl.proxySender = false
+	}
 }
 
 func makeDefaultTransport() *http.Transport {
@@ -188,12 +197,18 @@ func makeProxyTransport(dialer proxy.Dialer) *http.Transport {
 	return tport
 }
 
+func (impl *azureImpl) SetClient(client *http.Client) {
+	impl.proxySender = false
+	impl.sender = client
+}
+
 func (impl *azureImpl) SetProxy(dialer proxy.Dialer) {
 	if dialer == nil {
 		impl.ClearProxy()
 		return
 	}
 	transport := makeProxyTransport(dialer)
+	impl.proxySender = true
 	impl.sender = makeClientWithTransport(transport)
 }
 
@@ -221,9 +236,6 @@ var defaultClient = makeClientWithTransport(makeDefaultTransport())
 
 func (impl *azureImpl) configureClient(client *autorest.Client) {
 	client.Authorizer = impl.authorizer
-	if impl.sender != nil {
-		client.Sender = impl.sender
-	}
 	client.UserAgent = fmt.Sprintf("inzure/%s (+https://www.github.com/CarveSystems/inzure)", LibVersion)
 	if impl.sender != nil {
 		client.Sender = impl.sender
