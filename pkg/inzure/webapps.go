@@ -81,6 +81,8 @@ func (w *WebAppLanguage) FromAzureSiteConfig(az *web.SiteConfig) {
 			lang := split[0]
 			version := split[1]
 			switch strings.ToLower(lang) {
+			case "dotnet":
+				fallthrough
 			case "dotnetcore":
 				w.Language = LanguageDotNet
 			case "php":
