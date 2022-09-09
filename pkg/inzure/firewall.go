@@ -6,8 +6,8 @@ import (
 )
 
 var (
-	// BadWhitelist will be returned for malformed whitelists
-	BadWhitelist = errors.New("whitelist was malformed")
+	// BadAllowlist will be returned for malformed allowlist
+	BadAllowlist = errors.New("allowlist was malformed")
 )
 
 // Firewall represents anything that has rules to allow or disallow
@@ -29,16 +29,16 @@ type Firewall interface {
 	// slice gives IPs that can be reached at that port.
 	AllowsIPToPort(AzureIPv4, AzurePort) (UnknownBool, []PacketRoute, error)
 	AllowsIPToPortString(string, string) (UnknownBool, []PacketRoute, error)
-	// RespectsWhitelist checks if the firewall respects a given whitelist.
+	// RespectsAllowlist checks if the firewall respects a given allowlist.
 	//
-	// Note that blocking all traffic is considered respecting the whitelist
+	// Note that blocking all traffic is considered respecting the allowlist
 	// in this method. This keeps the complexity of implementation functions
 	// lower. You can use the other Allows* methods to verify that it is
-	// respecting a whitelist in a positive sense (ie it allows everything
-	// in the whitelist through).
+	// respecting a allowlist in a positive sense (ie it allows everything
+	// in the allowlist through).
 	//
-	// A whitelist that is empty (this is dependent on the implementation's
-	// definition of "empty") should cause this to return the BadWhitelist
+	// A allowlist that is empty (this is dependent on the implementation's
+	// definition of "empty") should cause this to return the BadAllowlist
 	// error with a BoolUnknown.
 	//
 	// If this given firewall is port agnostic (SQL and Redis servers for
@@ -47,7 +47,7 @@ type Firewall interface {
 	//
 	// On return, if BoolTrue/Unknown the []IPPort should specify which IPs
 	// failed on which Ports. If port agnostic, the port should simply be "*"
-	RespectsWhitelist(FirewallWhitelist) (UnknownBool, []IPPort, error)
+	RespectsAllowlist(FirewallAllowlist) (UnknownBool, []IPPort, error)
 }
 
 // FirewallAllowsIPFromString is a convenience method for calling a Firewalls
@@ -163,16 +163,16 @@ func FirewallAllowsIPToIPPort(f Firewall, src, dst AzureIPv4, port AzurePort) (U
 	return allows, prs, nil
 }
 
-// FirewallWhitelist defines a whitelist for inzure. These are intended to be
+// FirewallAllowlist defines a allowlist for inzure. These are intended to be
 // ingested by Firewalls for validation.
-type FirewallWhitelist struct {
+type FirewallAllowlist struct {
 	AllPorts []AzureIPv4
 
 	PortMap        map[string][]AzureIPv4
 	reversePortMap map[AzurePort]string
 }
 
-func (fw FirewallWhitelist) AddPortEntry(port string, ips []AzureIPv4) {
+func (fw FirewallAllowlist) AddPortEntry(port string, ips []AzureIPv4) {
 	if fw.PortMap == nil {
 		fw.PortMap = make(map[string][]AzureIPv4)
 	}
@@ -183,14 +183,14 @@ func (fw FirewallWhitelist) AddPortEntry(port string, ips []AzureIPv4) {
 	fw.reversePortMap[NewPortFromAzure(port)] = port
 }
 
-func (fw FirewallWhitelist) RemovePortEntry(port string) {
+func (fw FirewallAllowlist) RemovePortEntry(port string) {
 	if _, has := fw.PortMap[port]; has {
 		delete(fw.PortMap, port)
 		delete(fw.reversePortMap, NewPortFromAzure(port))
 	}
 }
 
-func (fwl *FirewallWhitelist) UnmarshalJSON(b []byte) error {
+func (fwl *FirewallAllowlist) UnmarshalJSON(b []byte) error {
 	tmp := make(map[string][]string)
 	err := json.Unmarshal(b, &tmp)
 	if err != nil {
@@ -221,7 +221,7 @@ func (fwl *FirewallWhitelist) UnmarshalJSON(b []byte) error {
 }
 
 // IPPassesAny checks if the port/ip combo passes.
-func (fwl *FirewallWhitelist) IPPassesAny(port AzurePort, ip AzureIPv4) UnknownBool {
+func (fwl *FirewallAllowlist) IPPassesAny(port AzurePort, ip AzureIPv4) UnknownBool {
 	passesStar := fwl.IPPassesStar(ip)
 	if passesStar.True() {
 		return BoolTrue
@@ -243,14 +243,14 @@ func (fwl *FirewallWhitelist) IPPassesAny(port AzurePort, ip AzureIPv4) UnknownB
 
 // IPPassesStar ONLY checks AllPorts. If you need to also check for ports,
 // use IPPassesAny
-func (fwl *FirewallWhitelist) IPPassesStar(ip AzureIPv4) UnknownBool {
+func (fwl *FirewallAllowlist) IPPassesStar(ip AzureIPv4) UnknownBool {
 	// IPInList will already check if the slice is null or 0 len
 	return IPInList(ip, fwl.AllPorts)
 }
 
 // IPPassesPort does not check if the IP is in AllPorts, for that behavior
 // use IPPassesAny.
-func (fwl *FirewallWhitelist) IPPassesPort(port AzurePort, ip AzureIPv4) UnknownBool {
+func (fwl *FirewallAllowlist) IPPassesPort(port AzurePort, ip AzureIPv4) UnknownBool {
 	if fwl.PortMap == nil {
 		return BoolFalse
 	}
@@ -276,7 +276,7 @@ func (fwl *FirewallWhitelist) IPPassesPort(port AzurePort, ip AzureIPv4) Unknown
 	return IPInList(ip, ips)
 }
 
-func (fwl *FirewallWhitelist) Reset() {
+func (fwl *FirewallAllowlist) Reset() {
 	fwl.AllPorts = make([]AzureIPv4, 0)
 	fwl.PortMap = make(map[string][]AzureIPv4)
 }

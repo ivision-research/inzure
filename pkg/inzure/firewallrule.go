@@ -3,11 +3,11 @@ package inzure
 import (
 	"encoding/json"
 
-	lakeana "github.com/Azure/azure-sdk-for-go/services/datalake/analytics/mgmt/2016-11-01/account"
-	lakestore "github.com/Azure/azure-sdk-for-go/services/datalake/store/mgmt/2016-11-01/account"
-	"github.com/Azure/azure-sdk-for-go/services/postgresql/mgmt/2017-12-01/postgresql"
-	"github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
-	"github.com/Azure/azure-sdk-for-go/services/redis/mgmt/2018-03-01/redis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-analytics/armdatalakeanalytics"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-store/armdatalakestore"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresql"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql"
 )
 
 // FirewallRule holds the information for a simple firewall rule that allows
@@ -70,13 +70,13 @@ func (f FirewallRules) AllowsIPString(ip string) (UnknownBool, []PacketRoute, er
 	return FirewallAllowsIPFromString(f, ip)
 }
 
-// RespectsWhitelist for the general FirewallRules type is port agnostic. This
+// RespectsAllowlist for the general FirewallRules type is port agnostic. This
 // means that if the given list has a PortMap specified, this immediately
-// returns BoolNotApplicable. This also means that a whitelist without AllPorts
+// returns BoolNotApplicable. This also means that a allowlist without AllPorts
 // defined is an error.
-func (f FirewallRules) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (f FirewallRules) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil
@@ -125,33 +125,35 @@ func (fw *FirewallRule) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-func (fw *FirewallRule) FromAzureDataLakeStore(az *lakestore.FirewallRule) {
+func (fw *FirewallRule) FromAzureDataLakeStore(az *armdatalakestore.FirewallRule) {
 	if az.Name != nil {
 		fw.Name = *az.Name
 	}
+	// This is captured in the wrapping type
 	fw.AllowsAllAzure = BoolNotApplicable
-	props := az.FirewallRuleProperties
+	props := az.Properties
 	if props.EndIPAddress != nil && props.StartIPAddress != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIPAddress, *props.EndIPAddress)
 	}
 }
 
-func (fw *FirewallRule) FromAzureDataLakeAnalytics(az *lakeana.FirewallRule) {
+func (fw *FirewallRule) FromAzureDataLakeAnalytics(az *armdatalakeanalytics.FirewallRule) {
 	if az.Name != nil {
 		fw.Name = *az.Name
 	}
+	// This is captured in the wrapping type
 	fw.AllowsAllAzure = BoolNotApplicable
-	props := az.FirewallRuleProperties
+	props := az.Properties
 	if props.EndIPAddress != nil && props.StartIPAddress != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIPAddress, *props.EndIPAddress)
 	}
 }
 
-func (fw *FirewallRule) FromAzureSQL(az *sql.FirewallRule) {
+func (fw *FirewallRule) FromAzureSQL(az *armsql.FirewallRule) {
 	if az.Name != nil {
 		fw.Name = *az.Name
 	}
-	props := az.FirewallRuleProperties
+	props := az.Properties
 	if props.StartIPAddress != nil && props.EndIPAddress != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIPAddress, *props.EndIPAddress)
 		is, start, end := fw.IPRange.ContinuousRangeUint32()
@@ -163,20 +165,20 @@ func (fw *FirewallRule) FromAzureSQL(az *sql.FirewallRule) {
 	}
 }
 
-func (fw *FirewallRule) FromAzureRedis(az *redis.FirewallRule) {
+func (fw *FirewallRule) FromAzureRedis(az *armredis.FirewallRule) {
 	if az.Name != nil {
 		fw.Name = *az.Name
 	}
 	fw.AllowsAllAzure = BoolNotApplicable
-	props := az.FirewallRuleProperties
+	props := az.Properties
 	if props.StartIP != nil && props.EndIP != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIP, *props.EndIP)
 	}
 }
 
-func (fw *FirewallRule) FromAzurePostgres(az *postgresql.FirewallRule) {
-	valFromPtr(&fw.Name, az.Name)
-	props := az.FirewallRuleProperties
+func (fw *FirewallRule) FromAzurePostgres(az *armpostgresql.FirewallRule) {
+	gValFromPtr(&fw.Name, az.Name)
+	props := az.Properties
 	if props.StartIPAddress != nil && props.EndIPAddress != nil {
 		fw.IPRange = NewAzureIPv4FromRange(*props.StartIPAddress, *props.EndIPAddress)
 		is, start, end := fw.IPRange.ContinuousRangeUint32()

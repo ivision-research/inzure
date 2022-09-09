@@ -3,7 +3,7 @@ package inzure
 import (
 	"encoding/json"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-01-01/network"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 )
 
 type LoadBalancerProtocol = SecurityRuleProtocol
@@ -64,34 +64,34 @@ func NewEmptyLoadBalancer() *LoadBalancer {
 	}
 }
 
-func (lb *LoadBalancer) FromAzure(az *network.LoadBalancer) {
+func (lb *LoadBalancer) FromAzure(az *armnetwork.LoadBalancer) {
 	if az.ID == nil {
 		return
 	}
 	lb.Meta.FromID(*az.ID)
-	props := az.LoadBalancerPropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
 	fipcs := props.FrontendIPConfigurations
-	if fipcs != nil && len(*fipcs) > 0 {
-		lb.FrontendIPs = make([]LoadBalancerFrontendIPConfiguration, len(*fipcs))
-		for i, fipc := range *fipcs {
-			lb.FrontendIPs[i].FromAzure(&fipc)
+	if fipcs != nil && len(fipcs) > 0 {
+		lb.FrontendIPs = make([]LoadBalancerFrontendIPConfiguration, len(fipcs))
+		for i, fipc := range fipcs {
+			lb.FrontendIPs[i].FromAzure(fipc)
 		}
 	}
 
 	bips := props.BackendAddressPools
-	if bips != nil && len(*bips) > 0 {
-		lb.Backends = make([]LoadBalancerBackend, len(*bips))
-		for i, bip := range *bips {
-			lb.Backends[i].FromAzure(&bip)
+	if bips != nil && len(bips) > 0 {
+		lb.Backends = make([]LoadBalancerBackend, len(bips))
+		for i, bip := range bips {
+			lb.Backends[i].FromAzure(bip)
 		}
 	}
 }
 
-func (lb *LoadBalancer) AddLoadBalancerRule(azRule *network.LoadBalancingRule) {
-	if azRule == nil || azRule.LoadBalancingRulePropertiesFormat == nil {
+func (lb *LoadBalancer) AddLoadBalancerRule(azRule *armnetwork.LoadBalancingRule) {
+	if azRule == nil || azRule.Properties == nil {
 		return
 	}
 	var rule LoadBalancerRule
@@ -100,7 +100,7 @@ func (lb *LoadBalancer) AddLoadBalancerRule(azRule *network.LoadBalancingRule) {
 	}
 	var id ResourceID
 	rule.SetupEmpty()
-	props := azRule.LoadBalancingRulePropertiesFormat
+	props := azRule.Properties
 	front := props.FrontendIPConfiguration
 	if front != nil && front.ID != nil {
 		id.setupEmpty()
@@ -142,20 +142,24 @@ func (lb *LoadBalancer) AddLoadBalancerRule(azRule *network.LoadBalancingRule) {
 		rule.BackendPort = NewPortFromUint16(uint16(*backPort))
 	}
 	prot := props.Protocol
-	switch prot {
-	case network.TransportProtocolAll:
-		rule.Protocol = ProtocolAll
-	case network.TransportProtocolTCP:
-		rule.Protocol = ProtocolTCP
-	case network.TransportProtocolUDP:
-		rule.Protocol = ProtocolUDP
-	default:
+	if prot == nil {
 		rule.Protocol = ProtocolUnknown
+	} else {
+		switch *prot {
+		case armnetwork.TransportProtocolAll:
+			rule.Protocol = ProtocolAll
+		case armnetwork.TransportProtocolTCP:
+			rule.Protocol = ProtocolTCP
+		case armnetwork.TransportProtocolUDP:
+			rule.Protocol = ProtocolUDP
+		default:
+			rule.Protocol = ProtocolUnknown
+		}
 	}
 	lb.Rules = append(lb.Rules, rule)
 }
 
-func (lb *LoadBalancer) AddAzureFrontendIPConfiguration(azConf *network.FrontendIPConfiguration) {
+func (lb *LoadBalancer) AddAzureFrontendIPConfiguration(azConf *armnetwork.FrontendIPConfiguration) {
 	var ipc LoadBalancerFrontendIPConfiguration
 	ipc.SetupEmpty()
 	ipc.FromAzure(azConf)
@@ -178,7 +182,7 @@ func (lbf *LoadBalancerFrontendIPConfiguration) SetupEmpty() {
 	lbf.PrivateIP = NewEmptyAzureIPv4()
 }
 
-func (lb *LoadBalancer) AddAzureBackendConfiguration(azConf *network.BackendAddressPool) {
+func (lb *LoadBalancer) AddAzureBackendConfiguration(azConf *armnetwork.BackendAddressPool) {
 	lbb := LoadBalancerBackend{
 		IPConfigurations: make([]IPConfiguration, 0),
 	}
@@ -203,13 +207,13 @@ func (lbf *LoadBalancerFrontendIPConfiguration) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, &s)
 }
 
-func (lbf *LoadBalancerFrontendIPConfiguration) FromAzure(az *network.FrontendIPConfiguration) {
+func (lbf *LoadBalancerFrontendIPConfiguration) FromAzure(az *armnetwork.FrontendIPConfiguration) {
 	if az.ID == nil {
 		lbf.SetupEmpty()
 		return
 	}
 	lbf.Meta.FromID(*az.ID)
-	props := az.FrontendIPConfigurationPropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
@@ -233,21 +237,21 @@ type LoadBalancerBackend struct {
 	IPConfigurations []IPConfiguration
 }
 
-func (lbb *LoadBalancerBackend) FromAzure(az *network.BackendAddressPool) {
+func (lbb *LoadBalancerBackend) FromAzure(az *armnetwork.BackendAddressPool) {
 	if az.ID == nil {
 		return
 	}
-	props := az.BackendAddressPoolPropertiesFormat
+	props := az.Properties
 	if props == nil {
 		return
 	}
 	lbb.Meta.FromID(*az.ID)
 	ipcs := props.BackendIPConfigurations
-	if ipcs != nil && len(*ipcs) > 0 {
-		lbb.IPConfigurations = make([]IPConfiguration, len(*ipcs))
-		for i, ipc := range *ipcs {
+	if ipcs != nil && len(ipcs) > 0 {
+		lbb.IPConfigurations = make([]IPConfiguration, len(ipcs))
+		for i, ipc := range ipcs {
 			lbb.IPConfigurations[i].setupEmpty()
-			lbb.IPConfigurations[i].FromAzure(&ipc)
+			lbb.IPConfigurations[i].FromAzure(ipc)
 		}
 	}
 }

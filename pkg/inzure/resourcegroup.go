@@ -1,6 +1,6 @@
 package inzure
 
-import "github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2017-05-10/resources"
+import "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 
 // ResourceGroup is a way of diving up resources in a Subscription. Each Azure
 // object belongs to a ResourceGroup. ResourceGroups can be retrieved from the
@@ -46,7 +46,7 @@ func NewEmptyResourceGroup() *ResourceGroup {
 	}
 }
 
-func (rg *ResourceGroup) FromAzure(res *resources.Group) {
+func (rg *ResourceGroup) FromAzure(res *armresources.ResourceGroup) {
 	rg.Meta.setupEmpty()
 	if res.ID != nil {
 		rg.Meta.fromID(*res.ID)

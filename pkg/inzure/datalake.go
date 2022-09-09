@@ -1,8 +1,8 @@
 package inzure
 
 import (
-	lakeana "github.com/Azure/azure-sdk-for-go/services/datalake/analytics/mgmt/2016-11-01/account"
-	lakestore "github.com/Azure/azure-sdk-for-go/services/datalake/store/mgmt/2016-11-01/account"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-analytics/armdatalakeanalytics"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-store/armdatalakestore"
 )
 
 // TODO: The Azure data structure for DataLakeAnalytics claims to return an ID
@@ -16,45 +16,49 @@ import (
 // DataLakeAnalytics holds the import information for a Data Lake analytics
 // acount
 type DataLakeAnalytics struct {
-	Meta               ResourceID
-	Endpoint           string
-	Firewall           FirewallRules
-	FirewallEnabled    UnknownBool
-	FirewallAllowAzure UnknownBool
+	Meta     ResourceID
+	Endpoint string
+	Firewall DataLakeFirewall
+}
+
+type DataLakeFirewall struct {
+	Enabled    UnknownBool
+	AllowAzure UnknownBool
+	Rules      FirewallRules
 }
 
 func NewEmptyDataLakeAnalytics() *DataLakeAnalytics {
 	var id ResourceID
 	id.setupEmpty()
 	return &DataLakeAnalytics{
-		Meta:     id,
-		Firewall: make(FirewallRules, 0),
+		Meta: id,
+		Firewall: DataLakeFirewall{
+			Rules: make(FirewallRules, 0),
+		},
 	}
 }
 
-func (dl *DataLakeAnalytics) FromAzure(az *lakeana.DataLakeAnalyticsAccount) {
+func (dl *DataLakeAnalytics) FromAzure(az *armdatalakeanalytics.Account) {
 	if az.ID == nil {
 		return
 	}
 	dl.Meta.fromID(*az.ID)
-	props := az.DataLakeAnalyticsAccountProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	dl.FirewallEnabled = unknownFromBool(az.FirewallState == lakeana.FirewallStateEnabled)
-	dl.FirewallAllowAzure = unknownFromBool(
-		az.FirewallAllowAzureIps == lakeana.Enabled,
-	)
-	if props.Endpoint != nil {
-		dl.Endpoint = *props.Endpoint
-	}
+	dl.Firewall.Enabled = ubFromRhsPtr(armdatalakeanalytics.FirewallStateEnabled, props.FirewallState)
+	dl.Firewall.AllowAzure = ubFromRhsPtr(armdatalakeanalytics.FirewallAllowAzureIPsStateEnabled, props.FirewallAllowAzureIPs)
+
+	gValFromPtr(&dl.Endpoint, props.Endpoint)
+
 	if props.FirewallRules != nil {
-		fw := *props.FirewallRules
-		dl.Firewall = make(FirewallRules, 0, len(fw))
+		fw := props.FirewallRules
+		dl.Firewall.Rules = make(FirewallRules, 0, len(fw))
 		for _, azfw := range fw {
 			var nfw FirewallRule
-			nfw.FromAzureDataLakeAnalytics(&azfw)
-			dl.Firewall = append(dl.Firewall, nfw)
+			nfw.FromAzureDataLakeAnalytics(azfw)
+			dl.Firewall.Rules = append(dl.Firewall.Rules, nfw)
 		}
 	}
 }
@@ -64,9 +68,7 @@ type DataLakeStore struct {
 	Meta               ResourceID
 	Endpoint           string
 	Encrypted          UnknownBool
-	Firewall           FirewallRules
-	FirewallEnabled    UnknownBool
-	FirewallAllowAzure UnknownBool
+	Firewall           DataLakeFirewall
 	TrustedIDProviders []string
 	TrustIDProviders   UnknownBool
 }
@@ -76,45 +78,45 @@ func NewEmptyDataLakeStore() *DataLakeStore {
 	id.setupEmpty()
 	return &DataLakeStore{
 		Meta:               id,
-		Firewall:           make(FirewallRules, 0),
 		TrustedIDProviders: make([]string, 0),
+		Firewall: DataLakeFirewall{
+			Rules: make(FirewallRules, 0),
+		},
 	}
 }
 
-func (dl *DataLakeStore) FromAzure(az *lakestore.DataLakeStoreAccount) {
+func (dl *DataLakeStore) FromAzure(az *armdatalakestore.Account) {
 	if az.ID == nil {
 		return
 	}
 	dl.Meta.fromID(*az.ID)
-	props := az.DataLakeStoreAccountProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	dl.Encrypted = unknownFromBool(az.EncryptionState == lakestore.Enabled)
-	dl.FirewallEnabled = unknownFromBool(az.FirewallState == lakestore.FirewallStateEnabled)
-	dl.FirewallAllowAzure = unknownFromBool(
-		az.FirewallAllowAzureIps == lakestore.FirewallAllowAzureIpsStateEnabled,
-	)
-	dl.TrustIDProviders = unknownFromBool(
-		az.TrustedIDProviderState == lakestore.TrustedIDProviderStateEnabled,
-	)
-	if props.Endpoint != nil {
-		dl.Endpoint = *props.Endpoint
-	}
+	dl.Encrypted = ubFromRhsPtr(armdatalakestore.EncryptionStateEnabled, props.EncryptionState)
+
+	dl.TrustIDProviders = ubFromRhsPtr(armdatalakestore.TrustedIDProviderStateEnabled, props.TrustedIDProviderState)
+
+	dl.Firewall.Enabled = ubFromRhsPtr(armdatalakestore.FirewallStateEnabled, props.FirewallState)
+	dl.Firewall.AllowAzure = ubFromRhsPtr(armdatalakestore.FirewallAllowAzureIPsStateEnabled, props.FirewallAllowAzureIPs)
+
+	gValFromPtr(&dl.Endpoint, props.Endpoint)
+
 	if props.FirewallRules != nil {
-		fw := *props.FirewallRules
-		dl.Firewall = make(FirewallRules, 0, len(fw))
+		fw := props.FirewallRules
+		dl.Firewall.Rules = make(FirewallRules, 0, len(fw))
 		for _, azfw := range fw {
 			var nfw FirewallRule
-			nfw.FromAzureDataLakeStore(&azfw)
-			dl.Firewall = append(dl.Firewall, nfw)
+			nfw.FromAzureDataLakeStore(azfw)
+			dl.Firewall.Rules = append(dl.Firewall.Rules, nfw)
 		}
 	}
 	if props.TrustedIDProviders != nil {
-		tidps := *props.TrustedIDProviders
+		tidps := props.TrustedIDProviders
 		dl.TrustedIDProviders = make([]string, 0, len(tidps))
 		for _, tidp := range tidps {
-			props := tidp.TrustedIDProviderProperties
+			props := tidp.Properties
 			if props != nil {
 				if props.IDProvider != nil {
 					dl.TrustedIDProviders = append(dl.TrustedIDProviders, *props.IDProvider)
@@ -122,4 +124,40 @@ func (dl *DataLakeStore) FromAzure(az *lakestore.DataLakeStoreAccount) {
 			}
 		}
 	}
+}
+
+func (fw *DataLakeFirewall) AllowsIP(ip AzureIPv4) (UnknownBool, []PacketRoute, error) {
+	if fw.Enabled.False() {
+		return BoolTrue, AllowsAllPacketRoutes(), nil
+	}
+	return fw.Rules.AllowsIP(ip)
+}
+
+func (fw *DataLakeFirewall) AllowsIPString(ip string) (UnknownBool, []PacketRoute, error) {
+	if fw.Enabled.False() {
+		return BoolTrue, AllowsAllPacketRoutes(), nil
+	}
+	return fw.Rules.AllowsIPString(ip)
+}
+
+func (fw *DataLakeFirewall) AllowsIPToPort(ip AzureIPv4, port AzurePort) (UnknownBool, []PacketRoute, error) {
+	if fw.Enabled.False() {
+		return BoolTrue, AllowsAllPacketRoutes(), nil
+	}
+	return fw.Rules.AllowsIPToPort(ip, port)
+}
+
+func (fw *DataLakeFirewall) AllowsIPToPortString(ip string, port string) (UnknownBool, []PacketRoute, error) {
+	if fw.Enabled.False() {
+		return BoolTrue, AllowsAllPacketRoutes(), nil
+	}
+
+	return fw.Rules.AllowsIPToPortString(ip, port)
+}
+
+func (fw *DataLakeFirewall) RespectsAllowlist(allowlist FirewallAllowlist) (UnknownBool, []IPPort, error) {
+	if fw.Enabled.False() {
+		return BoolFalse, AllIPPorts(), nil
+	}
+	return fw.Rules.RespectsAllowlist(allowlist)
 }

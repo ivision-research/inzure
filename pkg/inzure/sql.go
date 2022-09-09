@@ -3,7 +3,7 @@ package inzure
 import (
 	"strings"
 
-	sqldb "github.com/Azure/azure-sdk-for-go/services/preview/sql/mgmt/2017-03-01-preview/sql"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql"
 )
 
 // SQLServer holds all information for a Microsoft SQL server
@@ -28,8 +28,8 @@ func NewEmptySQLServer() *SQLServer {
 	}
 }
 
-func (s *SQLServer) addVNetRule(az *sqldb.VirtualNetworkRule) {
-	props := az.VirtualNetworkRuleProperties
+func (s *SQLServer) addVNetRule(az *armsql.VirtualNetworkRule) {
+	props := az.Properties
 	if props == nil || props.VirtualNetworkSubnetID == nil {
 		return
 	}
@@ -38,12 +38,12 @@ func (s *SQLServer) addVNetRule(az *sqldb.VirtualNetworkRule) {
 	s.Subnets = append(s.Subnets, id)
 }
 
-func (s *SQLServer) FromAzure(az *sqldb.Server) {
+func (s *SQLServer) FromAzure(az *armsql.Server) {
 	if az.ID == nil {
 		return
 	}
 	s.Meta.fromID(*az.ID)
-	props := az.ServerProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
@@ -59,37 +59,22 @@ func (s *SQLServer) FromAzure(az *sqldb.Server) {
 }
 
 type SQLDatabase struct {
-	Meta      ResourceID
-	UUID      string
-	Encrypted UnknownBool
-	// TODO:
-	// sql.Database.Status could be useful but I'd prefer to turn it
-	// into an enum instead of just a string.
+	Meta       ResourceID
+	DatabaseID string
+	Encrypted  UnknownBool
 }
 
-func (db *SQLDatabase) FromAzure(az *sqldb.Database) {
+func (db *SQLDatabase) FromAzure(az *armsql.Database) {
 	if az.ID == nil {
 		return
 	}
 	db.Meta.fromID(*az.ID)
-	props := az.DatabaseProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	if props.DatabaseID != nil {
-		db.UUID = props.DatabaseID.String()
-	}
-	// TODO: Why is this a slice..?
-	if props.TransparentDataEncryption != nil {
-		for _, tde := range *props.TransparentDataEncryption {
-			tdeProps := tde.TransparentDataEncryptionProperties
-			if tdeProps != nil {
-				db.Encrypted.FromBool(tdeProps.Status == sqldb.TransparentDataEncryptionStatusEnabled)
-				// TODO: Should I really break here?
-				break
-			}
-		}
-	}
+	gValFromPtr(&db.DatabaseID, props.DatabaseID)
+
 }
 
 func (db *SQLDatabase) QueryString() string {

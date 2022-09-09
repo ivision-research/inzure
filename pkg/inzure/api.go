@@ -2,30 +2,58 @@ package inzure
 
 import (
 	"strings"
+	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2018-01-01/apimanagement"
-	"github.com/Azure/go-autorest/autorest/date"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement"
 )
 
+type APIServiceVNetType uint8
+
+const (
+	APIServiceVNetTypeUnknown APIServiceVNetType = iota
+	APIServiceVNetTypeExternal
+	APIServiceVNetTypeInternal
+	APIServiceVNetTypeNone
+)
+
+func (ty *APIServiceVNetType) FromAzure(az *armapimanagement.VirtualNetworkType) {
+	if az == nil {
+		// Defaults to None
+		*ty = APIServiceVNetTypeNone
+		return
+	}
+	switch *az {
+	case armapimanagement.VirtualNetworkTypeExternal:
+		*ty = APIServiceVNetTypeExternal
+	case armapimanagement.VirtualNetworkTypeInternal:
+		*ty = APIServiceVNetTypeInternal
+	case armapimanagement.VirtualNetworkTypeNone:
+		*ty = APIServiceVNetTypeNone
+	default:
+		*ty = APIServiceVNetTypeNone
+	}
+}
+
 type APIService struct {
-	Meta             ResourceID
-	GatewayURL       string
-	PortalURL        string
-	ManagementAPIURL string
-	SCMURL           string
-	StaticIPs        []AzureIPv4
-	CustomProperties map[string]string
-	HostnameConfigs  []APIServiceHostnameConfig
-	VNetType         string
-	SubnetRef        ResourceID
-	APIs             []*API
-	Users            []*APIServiceUser
-	PrimaryKey       string
-	SecondaryKey     string
-	AccessEnabled    UnknownBool
-	SignupEnabled    UnknownBool
-	Backends         []*APIBackend
-	Products         []*APIServiceProduct
+	Meta               ResourceID
+	GatewayURL         string
+	DeveloperPortalURL string
+	PortalURL          string
+	ManagementAPIURL   string
+	SCMURL             string
+	StaticIPs          []AzureIPv4
+	CustomProperties   map[string]string
+	HostnameConfigs    []APIServiceHostnameConfig
+	VNetType           APIServiceVNetType
+	SubnetRef          ResourceID
+	APIs               []*API
+	Users              []*APIServiceUser
+	//PrimaryKey         string
+	//SecondaryKey       string
+	//AccessEnabled      UnknownBool
+	SignupEnabled UnknownBool
+	Backends      []*APIBackend
+	Products      []*APIServiceProduct
 }
 
 func NewEmptyAPIService() *APIService {
@@ -41,26 +69,29 @@ func NewEmptyAPIService() *APIService {
 	return s
 }
 
-func (as *APIService) FromAzure(az *apimanagement.ServiceResource) {
+func (as *APIService) FromAzure(az *armapimanagement.ServiceResource) {
 	if az.ID == nil {
 		return
 	}
 	as.Meta.fromID(*az.ID)
-	props := az.ServiceProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	if props.HostnameConfigurations != nil && len(*props.HostnameConfigurations) > 0 {
-		as.HostnameConfigs = make([]APIServiceHostnameConfig, len(*props.HostnameConfigurations))
-		for i, e := range *props.HostnameConfigurations {
-			as.HostnameConfigs[i].FromAzure(&e)
+	if props.HostnameConfigurations != nil && len(props.HostnameConfigurations) > 0 {
+		as.HostnameConfigs = make([]APIServiceHostnameConfig, len(props.HostnameConfigurations))
+		for i, e := range props.HostnameConfigurations {
+			as.HostnameConfigs[i].FromAzure(e)
 		}
 	}
-	valFromPtr(&as.SCMURL, props.ScmURL)
-	valFromPtr(&as.PortalURL, props.PortalURL)
-	valFromPtr(&as.ManagementAPIURL, props.ManagementAPIURL)
-	valFromPtr(&as.GatewayURL, props.GatewayURL)
-	as.VNetType = string(props.VirtualNetworkType)
+	gValFromPtr(&as.SCMURL, props.ScmURL)
+	gValFromPtr(&as.PortalURL, props.PortalURL)
+	gValFromPtr(&as.ManagementAPIURL, props.ManagementAPIURL)
+	gValFromPtr(&as.GatewayURL, props.GatewayURL)
+	gValFromPtr(&as.DeveloperPortalURL, props.DeveloperPortalURL)
+
+	gValFromPtrFromAzure(&as.VNetType, props.VirtualNetworkType)
+
 	for k, v := range props.CustomProperties {
 		if v != nil && strings.Contains(k, "Security") {
 			as.CustomProperties[k] = *v
@@ -72,22 +103,17 @@ func (as *APIService) FromAzure(az *apimanagement.ServiceResource) {
 	}
 }
 
-func (as *APIService) addSignupSettingsFromAzure(az *apimanagement.PortalSignupSettings) {
-	props := az.PortalSignupSettingsProperties
+func (as *APIService) setSignupSettingsFromAzure(az *armapimanagement.PortalSignupSettings) {
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	as.SignupEnabled.FromBoolPtr(az.Enabled)
-}
-
-func (as *APIService) addAccessInfoFromAzure(az *apimanagement.AccessInformationContract) {
-	valFromPtr(&as.PrimaryKey, az.PrimaryKey)
-	valFromPtr(&as.SecondaryKey, az.SecondaryKey)
-	as.AccessEnabled.FromBoolPtr(az.Enabled)
+	as.SignupEnabled.FromBoolPtr(props.Enabled)
 }
 
 type APIBackend struct {
 	Meta                  ResourceID
+	Protocol              string
 	URL                   string
 	ClientCertThumbprints []string
 	AuthQuery             map[string][]string
@@ -111,28 +137,41 @@ func NewEmptyAPIBackend() *APIBackend {
 	return b
 }
 
-func (b *APIBackend) FromAzure(az *apimanagement.BackendContract) {
+func (b *APIBackend) FromAzure(az *armapimanagement.BackendContract) {
 	if az.ID == nil {
 		return
 	}
 	b.Meta.fromID(*az.ID)
-	props := az.BackendContractProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	valFromPtr(&b.URL, props.URL)
+
+	if props.Protocol != nil {
+		b.Protocol = string(*props.Protocol)
+	}
+
+	gValFromPtr(&b.URL, props.URL)
 	creds := props.Credentials
 	if creds != nil {
 		for k, v := range creds.Query {
-			b.AuthQuery[k] = v
+			into := make([]string, len(v))
+			for i, e := range v {
+				into[i] = *e
+			}
+			b.AuthQuery[k] = into
 		}
 		for k, v := range creds.Header {
-			b.AuthHeader[k] = v
+			into := make([]string, len(v))
+			for i, e := range v {
+				into[i] = *e
+			}
+			b.AuthHeader[k] = into
 		}
 		auth := creds.Authorization
 		if auth != nil {
-			valFromPtr(&b.AuthHeaderScheme, auth.Scheme)
-			valFromPtr(&b.AuthHeaderParam, auth.Parameter)
+			gValFromPtr(&b.AuthHeaderScheme, auth.Scheme)
+			gValFromPtr(&b.AuthHeaderParam, auth.Parameter)
 		}
 	}
 	tls := props.TLS
@@ -142,43 +181,49 @@ func (b *APIBackend) FromAzure(az *apimanagement.BackendContract) {
 	}
 	prox := props.Proxy
 	if prox != nil {
-		valFromPtr(&b.ProxyURL, prox.URL)
-		valFromPtr(&b.ProxyUser, prox.Username)
-		valFromPtr(&b.ProxyPass, prox.Password)
+		gValFromPtr(&b.ProxyURL, prox.URL)
+		gValFromPtr(&b.ProxyUser, prox.Username)
+		gValFromPtr(&b.ProxyPass, prox.Password)
 	}
 }
 
 type APIServiceHostnameConfig struct {
-	Type     string
+	// TODO This is an enum type now
+	//Type     string
+
 	Hostname string
-	//CertInfo APIServiceCertInfo
 }
 
-func (hc *APIServiceHostnameConfig) FromAzure(az *apimanagement.HostnameConfiguration) {
-	hc.Type = string(az.Type)
-	valFromPtr(&hc.Hostname, az.HostName)
-	//valFromPtrFromAzure(&hc.CertInfo, az.Certificate)
+func (hc *APIServiceHostnameConfig) FromAzure(az *armapimanagement.HostnameConfiguration) {
+	//hc.Type = string(az.Type)
+	gValFromPtr(&hc.Hostname, az.HostName)
 }
 
 type APIServiceProduct struct {
 	Meta                 ResourceID
+	DisplayName          string
 	SubscriptionRequired UnknownBool
 	ApprovalRequired     UnknownBool
 	IsPublished          UnknownBool
 }
 
-func (p *APIServiceProduct) FromAzure(az *apimanagement.ProductContract) {
+func (p *APIServiceProduct) FromAzure(az *armapimanagement.ProductContract) {
 	if az.ID == nil {
 		return
 	}
 	p.Meta.fromID(*az.ID)
-	props := az.ProductContractProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
+	gValFromPtr(&p.DisplayName, props.DisplayName)
 	p.SubscriptionRequired.FromBoolPtr(props.SubscriptionRequired)
 	p.ApprovalRequired.FromBoolPtr(props.ApprovalRequired)
-	p.IsPublished.FromBool(props.State == apimanagement.Published)
+	if props.State == nil {
+		p.IsPublished = BoolUnknown
+	} else {
+		p.IsPublished.FromBool(*props.State == armapimanagement.ProductStatePublished)
+	}
 }
 
 func NewEmptyAPIServiceProduct() *APIServiceProduct {
@@ -196,15 +241,17 @@ type APIOpParameter struct {
 	Values       []string
 }
 
-func (p *APIOpParameter) FromAzure(az *apimanagement.ParameterContract) {
-	valFromPtr(&p.Name, az.Name)
-	valFromPtr(&p.Desc, az.Description)
-	valFromPtr(&p.Type, az.Type)
-	valFromPtr(&p.DefaultValue, az.DefaultValue)
+func (p *APIOpParameter) FromAzure(az *armapimanagement.ParameterContract) {
+	gValFromPtr(&p.Name, az.Name)
+	gValFromPtr(&p.Desc, az.Description)
+	gValFromPtr(&p.Type, az.Type)
+	gValFromPtr(&p.DefaultValue, az.DefaultValue)
 	p.Required.FromBoolPtr(az.Required)
-	sliceFromPtr(&p.Values, az.Values)
-	if p.Values == nil {
-		p.Values = make([]string, 0)
+	if az.Values != nil && len(az.Values) < 0 {
+		p.Values = make([]string, len(az.Values))
+		for i, v := range az.Values {
+			p.Values[i] = *v
+		}
 	}
 }
 
@@ -212,7 +259,6 @@ func (p *APIOpParameter) FromAzure(az *apimanagement.ParameterContract) {
 // the API. There is
 type APIRepresentation struct {
 	ContentType string
-	Sample      string
 	// SchemaID is not set when the content type isn't form data
 	SchemaID string
 	// TypeName
@@ -221,26 +267,16 @@ type APIRepresentation struct {
 	FormParameters []APIOpParameter
 }
 
-func (r *APIRepresentation) FromAzure(az *apimanagement.RepresentationContract) {
+func (r *APIRepresentation) FromAzure(az *armapimanagement.RepresentationContract) {
 	if az == nil {
 		return
 	}
-	valFromPtr(&r.ContentType, az.ContentType)
-	valFromPtr(&r.Sample, az.Sample)
-	valFromPtr(&r.SchemaID, az.SchemaID)
-	valFromPtr(&r.TypeName, az.TypeName)
-	fp := az.FormParameters
-	if fp != nil && len(*fp) > 0 {
-		r.FormParameters = make([]APIOpParameter, len(*fp))
-		for i, e := range *fp {
-			r.FormParameters[i].FromAzure(&e)
-		}
-	} else {
-		r.FormParameters = make([]APIOpParameter, 0)
-	}
+	gValFromPtr(&r.ContentType, az.ContentType)
+	gValFromPtr(&r.SchemaID, az.SchemaID)
+	gValFromPtr(&r.TypeName, az.TypeName)
+	gSliceFromPtrSetterPtrs(&r.FormParameters, &az.FormParameters, fromAzureSetter[armapimanagement.ParameterContract, *APIOpParameter])
 }
 
-// TODO: https://godoc.org/github.com/Azure/azure-sdk-for-go/services/apimanagement/mgmt/2017-03-01/apimanagement#RequestContract Representations
 type APIOperation struct {
 	Meta            ResourceID
 	Method          string
@@ -262,45 +298,45 @@ func NewEmptyAPIOperation() *APIOperation {
 	return op
 }
 
-func (op *APIOperation) FromAzure(az *apimanagement.OperationContract) {
+func (op *APIOperation) FromAzure(az *armapimanagement.OperationContract) {
 	if az.ID == nil {
 		return
 	}
 	op.Meta.fromID(*az.ID)
-	props := az.OperationContractProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	valFromPtr(&op.Method, props.Method)
-	valFromPtr(&op.URL, props.URLTemplate)
+	gValFromPtr(&op.Method, props.Method)
+	gValFromPtr(&op.URL, props.URLTemplate)
 	tp := props.TemplateParameters
-	if tp != nil && len(*tp) > 0 {
-		op.URLParamaters = make([]APIOpParameter, len(*tp))
-		for i, e := range *tp {
-			op.URLParamaters[i].FromAzure(&e)
+	if tp != nil && len(tp) > 0 {
+		op.URLParamaters = make([]APIOpParameter, len(tp))
+		for i, e := range tp {
+			op.URLParamaters[i].FromAzure(e)
 		}
 	}
 	req := props.Request
 	if req != nil {
 		tp = req.QueryParameters
-		if tp != nil && len(*tp) > 0 {
-			op.QueryParameters = make([]APIOpParameter, len(*tp))
-			for i, e := range *tp {
-				op.QueryParameters[i].FromAzure(&e)
+		if tp != nil && len(tp) > 0 {
+			op.QueryParameters = make([]APIOpParameter, len(tp))
+			for i, e := range tp {
+				op.QueryParameters[i].FromAzure(e)
 			}
 		}
 		tp = req.Headers
-		if tp != nil && len(*tp) > 0 {
-			op.Headers = make([]APIOpParameter, len(*tp))
-			for i, e := range *tp {
-				op.Headers[i].FromAzure(&e)
+		if tp != nil && len(tp) > 0 {
+			op.Headers = make([]APIOpParameter, len(tp))
+			for i, e := range tp {
+				op.Headers[i].FromAzure(e)
 			}
 		}
 		rep := req.Representations
-		if rep != nil && len(*rep) > 0 {
-			op.Representations = make([]APIRepresentation, len(*rep))
-			for i, e := range *rep {
-				op.Representations[i].FromAzure(&e)
+		if rep != nil && len(rep) > 0 {
+			op.Representations = make([]APIRepresentation, len(rep))
+			for i, e := range rep {
+				op.Representations[i].FromAzure(e)
 			}
 		}
 	}
@@ -318,17 +354,17 @@ func NewEmptyAPISchema() *APISchema {
 	return s
 }
 
-func (s *APISchema) FromAzure(az *apimanagement.SchemaContract) {
+func (s *APISchema) FromAzure(az *armapimanagement.SchemaContract) {
 	if az == nil || az.ID == nil {
 		return
 	}
 	s.Meta.fromID(*az.ID)
-	props := az.SchemaContractProperties
+	props := az.Properties
 	if props != nil {
-		valFromPtr(&s.ContentType, az.ContentType)
-		docProps := props.SchemaDocumentProperties
+		gValFromPtr(&s.ContentType, props.ContentType)
+		docProps := props.Document
 		if docProps != nil {
-			valFromPtr(&s.JSON, docProps.Value)
+			gValFromPtr(&s.JSON, docProps.Value)
 		}
 	}
 }
@@ -357,28 +393,30 @@ func NewEmptyAPI() *API {
 	return api
 }
 
-func (a *API) FromAzure(az *apimanagement.APIContract) {
+func (a *API) FromAzure(az *armapimanagement.APIContract) {
 	if az.ID == nil {
 		return
 	}
 	a.Meta.fromID(*az.ID)
-	props := az.APIContractProperties
+	props := az.Properties
 	if props == nil {
 		return
 	}
-	valFromPtr(&a.Revision, props.APIRevision)
-	valFromPtr(&a.ServiceURL, props.ServiceURL)
-	valFromPtr(&a.Path, props.Path)
+	gValFromPtr(&a.Revision, props.APIRevision)
+	gValFromPtr(&a.ServiceURL, props.ServiceURL)
+	gValFromPtr(&a.Path, props.Path)
 	if props.Protocols != nil {
-		a.Protocols = make([]string, 0, len(*props.Protocols))
-		for _, e := range *props.Protocols {
-			a.Protocols = append(a.Protocols, string(e))
+		a.Protocols = make([]string, 0, len(props.Protocols))
+		for _, e := range props.Protocols {
+			if e != nil {
+				a.Protocols = append(a.Protocols, string(*e))
+			}
 		}
 	}
 	sk := props.SubscriptionKeyParameterNames
 	if sk != nil {
-		valFromPtr(&a.SubKeyHeader, sk.Header)
-		valFromPtr(&a.SubKeyQuery, sk.Query)
+		gValFromPtr(&a.SubKeyHeader, sk.Header)
+		gValFromPtr(&a.SubKeyQuery, sk.Query)
 	}
 	// TODO: OAuth2 settings?
 	a.Online.FromBoolPtr(props.IsOnline)
@@ -394,15 +432,19 @@ const (
 	APIUserStateDeleted
 )
 
-func (a *APIUserActivationState) FromAzure(az apimanagement.UserState) {
-	switch az {
-	case apimanagement.UserStateActive:
+func (a *APIUserActivationState) FromAzure(az *armapimanagement.UserState) {
+	if az == nil {
+		*a = APIUserStateUnknown
+		return
+	}
+	switch *az {
+	case armapimanagement.UserStateActive:
 		*a = APIUserStateActive
-	case apimanagement.UserStateBlocked:
+	case armapimanagement.UserStateBlocked:
 		*a = APIUserStateBlocked
-	case apimanagement.UserStateDeleted:
+	case armapimanagement.UserStateDeleted:
 		*a = APIUserStateDeleted
-	case apimanagement.UserStatePending:
+	case armapimanagement.UserStatePending:
 		*a = APIUserStatePending
 	default:
 		*a = APIUserStateUnknown
@@ -413,7 +455,7 @@ type APIServiceUser struct {
 	FirstName    string
 	LastName     string
 	Email        string
-	RegisteredAt date.Time
+	RegisteredAt time.Time
 	State        APIUserActivationState
 	Groups       []string
 	Identities   []APIServiceUserIdentity
@@ -427,29 +469,38 @@ func NewAPIServiceUser() *APIServiceUser {
 	return u
 }
 
-func (asu *APIServiceUser) FromAzure(az *apimanagement.UserContract) {
-	props := az.UserContractProperties
+func (asu *APIServiceUser) FromAzure(az *armapimanagement.UserContract) {
+	props := az.Properties
 	if props == nil {
 		return
 	}
 	asu.State.FromAzure(props.State)
-	valFromPtr(&asu.FirstName, props.FirstName)
-	valFromPtr(&asu.LastName, props.LastName)
-	valFromPtr(&asu.Email, props.Email)
-	valFromPtr(&asu.RegisteredAt, props.RegistrationDate)
+	gValFromPtr(&asu.FirstName, props.FirstName)
+	gValFromPtr(&asu.LastName, props.LastName)
+	gValFromPtr(&asu.Email, props.Email)
+	gValFromPtr(&asu.RegisteredAt, props.RegistrationDate)
 	if props.Groups != nil {
-		gs := *props.Groups
+		gs := props.Groups
 		asu.Groups = make([]string, len(gs))
 		for i, g := range gs {
-			valFromPtr(&asu.Groups[i], g.DisplayName)
+			if g == nil {
+				asu.Groups[i] = ""
+			} else {
+				gValFromPtr(&asu.Groups[i], g.DisplayName)
+			}
 		}
 	}
 	if props.Identities != nil {
-		ids := *props.Identities
+		ids := props.Identities
 		asu.Identities = make([]APIServiceUserIdentity, len(ids))
 		for i, id := range ids {
-			valFromPtr(&asu.Identities[i].ID, id.ID)
-			valFromPtr(&asu.Identities[i].Provider, id.Provider)
+			if id == nil {
+				asu.Identities[i].ID = ""
+				asu.Identities[i].Provider = ""
+			} else {
+				gValFromPtr(&asu.Identities[i].ID, id.ID)
+				gValFromPtr(&asu.Identities[i].Provider, id.Provider)
+			}
 		}
 	}
 }

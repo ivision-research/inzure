@@ -3,7 +3,7 @@ package inzure
 import (
 	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/services/redis/mgmt/2018-03-01/redis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
 )
 
 // RedisServer holds all of the information pertinent to Azure redis servers.
@@ -36,7 +36,7 @@ func NewEmptyRedisServer() *RedisServer {
 	}
 }
 
-func (r *RedisServer) FromAzure(az *redis.ResourceType) {
+func (r *RedisServer) FromAzure(az *armredis.ResourceInfo) {
 	if az.ID == nil {
 		return
 	}
@@ -45,20 +45,18 @@ func (r *RedisServer) FromAzure(az *redis.ResourceType) {
 	if props == nil {
 		return
 	}
-	valFromPtr(&r.Host, az.HostName)
+	gValFromPtr(&r.Host, props.HostName)
 	if r.Host == "" {
-		r.Host = fmt.Sprintf("%s.redis.cache.windows.net", r.Meta.Name)
+		r.Host = fmt.Sprintf("%s.armredis.cache.windows.net", r.Meta.Name)
 	}
-	valFromPtr(&r.Version, props.RedisVersion)
+	gValFromPtr(&r.Version, props.RedisVersion)
 	if props.Port != nil {
 		r.Port = int(*props.Port)
 	}
-	if props.SslPort != nil {
-		r.SSLPort = int(*props.SslPort)
+	if props.SSLPort != nil {
+		r.SSLPort = int(*props.SSLPort)
 	}
-	if props.EnableNonSslPort != nil {
-		r.NonSSLPortEnabled = unknownFromBool(*props.EnableNonSslPort)
-	}
+	r.NonSSLPortEnabled.FromBoolPtr(props.EnableNonSSLPort)
 	if props.SubnetID != nil {
 		r.Subnet.fromID(*props.SubnetID)
 	}
@@ -67,11 +65,11 @@ func (r *RedisServer) FromAzure(az *redis.ResourceType) {
 
 type RedisFirewall []FirewallRule
 
-// RespectsWhitelist for a RedisFirewall is port agnostic, but it has a slight
+// RespectsAllowlist for a RedisFirewall is port agnostic, but it has a slight
 // difference compared to FirewallRules: if it is empty it allows everything.
-func (f RedisFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []IPPort, error) {
+func (f RedisFirewall) RespectsAllowlist(wl FirewallAllowlist) (UnknownBool, []IPPort, error) {
 	if wl.AllPorts == nil {
-		return BoolUnknown, nil, BadWhitelist
+		return BoolUnknown, nil, BadAllowlist
 	}
 	if wl.PortMap != nil && len(wl.PortMap) > 0 {
 		return BoolNotApplicable, nil, nil
@@ -81,7 +79,7 @@ func (f RedisFirewall) RespectsWhitelist(wl FirewallWhitelist) (UnknownBool, []I
 			{IP: NewAzureIPv4FromAzure("*"), Port: NewPortFromAzure("*")},
 		}, nil
 	}
-	return FirewallRules(f).RespectsWhitelist(wl)
+	return FirewallRules(f).RespectsAllowlist(wl)
 }
 
 func (f RedisFirewall) AllowsIPToPortString(ip, port string) (UnknownBool, []PacketRoute, error) {

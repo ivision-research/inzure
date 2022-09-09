@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:generate stringer -type AzureResourceTag
+//go:generate stringer -type=AzureResourceTag
 
 // AzureResourceTag is a tag given to a known Azure resource type for quick
 // identification
@@ -24,7 +24,7 @@ const (
 	StorageAccountT
 	ContainerT
 	QueueT
-	FileT
+	FileShareT
 	TableT
 	ProviderT
 	NetworkSecurityGroupT

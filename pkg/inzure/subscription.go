@@ -11,8 +11,6 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-//go:generate stringer -type SearchTarget
-
 // SearchTarget is a target available for searching through this package
 type SearchTarget uint
 
@@ -26,7 +24,6 @@ const (
 	TargetDataLakes
 	TargetSQL
 	TargetRedis
-	TargetRecommendations
 	TargetAPIs
 	TargetKeyVaults
 	TargetCosmosDBs
@@ -43,7 +40,6 @@ const (
 	TargetDataLakesString       = "datalakes"
 	TargetSQLString             = "sql"
 	TargetRedisString           = "redis"
-	TargetRecommendationsString = "recommendations"
 	TargetAPIsString            = "apis"
 	TargetKeyVaultsString       = "keyvaults"
 	TargetCosmosDBsString       = "cosmosdbs"
@@ -59,7 +55,6 @@ var AvailableTargets = map[string]SearchTarget{
 	TargetDataLakesString:       TargetDataLakes,
 	TargetSQLString:             TargetSQL,
 	TargetRedisString:           TargetRedis,
-	TargetRecommendationsString: TargetRecommendations,
 	TargetAPIsString:            TargetAPIs,
 	TargetKeyVaultsString:       TargetKeyVaults,
 	TargetCosmosDBsString:       TargetCosmosDBs,
@@ -109,12 +104,9 @@ type Subscription struct {
 	ResourceGroups map[string]*ResourceGroup
 	AuditDate      time.Time
 
-	Recommendations []*Recommendation
-
 	ClassicStorageAccounts []*StorageAccount
 
 	quiet         bool
-	listKeys      bool
 	classicKey    []byte
 	searchTargets map[SearchTarget]struct{}
 	proxy         proxy.Dialer
@@ -141,8 +133,6 @@ func NewSubscriptionWithAlias(id, alias string) Subscription {
 		classicKey:             nil,
 		AuditDate:              time.Now(),
 		quiet:                  false,
-		listKeys:               true,
-		Recommendations:        make([]*Recommendation, 0),
 		ResourceGroups:         make(map[string]*ResourceGroup),
 		searchTargets:          make(map[SearchTarget]struct{}),
 		ClassicStorageAccounts: make([]*StorageAccount, 0),
@@ -188,10 +178,6 @@ func (s *Subscription) log(f string, p ...interface{}) {
 	}
 }
 
-func (s *Subscription) HasListKeysPermission(f bool) {
-	s.listKeys = f
-}
-
 func (s *Subscription) SetProxy(dialer proxy.Dialer) {
 	s.proxy = dialer
 }
@@ -232,19 +218,6 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 	if s.classicKey != nil {
 		wg.Add(1)
 		go s.doClassic(ctx, azure, &wg, ec)
-	}
-
-	if _, ok := s.searchTargets[TargetRecommendations]; ok {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.log("[Begin] Recommendations on `%s`\n", s)
-			defer s.log("[End] Recommendations on `%s`\n", s)
-			for rec := range azure.GetRecommendations(ctx, s.ID, ec) {
-				s.log("Found recommendation `%s`\n", rec.Meta.Name)
-				s.Recommendations = append(s.Recommendations, rec)
-			}
-		}()
 	}
 
 	wg.Add(1)
@@ -503,40 +476,11 @@ func (s *Subscription) storageToResourceGroup(
 	defer wg.Done()
 	s.log("[Begin] Storage accounts in `%s`/`%s`\n", s, rg.Meta.Name)
 	defer s.log("[End] Storage accounts in `%s`/`%s`\n", s, rg.Meta.Name)
-	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, s.listKeys, ec) {
+	for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, ec) {
+		//for sa := range azure.GetStorageAccounts(ctx, rg.Meta.Subscription, rg.Meta.Name, s.listKeys, ec) {
 		s.log("Found storage account %s\n", sa.Meta.Name)
-		wg.Add(1)
 		rg.StorageAccounts = append(rg.StorageAccounts, sa)
-		go s.handleStorageAccount(ctx, sa, azure, wg, ec)
 	}
-}
-
-// handleStorageAccount fills the StorageAccount's Queues, Tables, Containers,
-// and Files. Note that nothing else should be touching those fields of the
-// passed StorageAccount pointer. This could maybe be ensured with locks, but
-// since this is an internal function I'm going to assume correct usage.
-func (s *Subscription) handleStorageAccount(
-	ctx context.Context,
-	sacc *StorageAccount,
-	azure AzureAPI,
-	wg *sync.WaitGroup,
-	ec chan<- error) {
-	if !s.listKeys {
-		wg.Done()
-		return
-	}
-	defer wg.Done()
-
-	wg.Add(1)
-	go func(acc *StorageAccount) {
-		s.log("[Begin] Searching storage account `%s` for containers\n", sacc.Meta.Name)
-		defer s.log("[End] Searching storage account `%s` for containers\n", sacc.Meta.Name)
-		defer wg.Done()
-		for c := range azure.GetContainers(ctx, acc, ec) {
-			s.log("Found container `%s` in storage account `%s`\n", c.Name, sacc.Meta.Name)
-			acc.Containers = append(acc.Containers, *c)
-		}
-	}(sacc)
 }
 
 func (s *Subscription) doClassic(
@@ -550,9 +494,7 @@ func (s *Subscription) doClassic(
 	if _, ok := s.searchTargets[TargetStorageAccounts]; ok {
 		for sa := range azure.GetClassicStorageAccounts(ctx, ec) {
 			s.log("Found classic storage account `%s`\n", sa.Meta.Name)
-			wg.Add(1)
 			s.ClassicStorageAccounts = append(s.ClassicStorageAccounts, sa)
-			go s.handleStorageAccount(ctx, sa, azure, wg, ec)
 		}
 	}
 }
