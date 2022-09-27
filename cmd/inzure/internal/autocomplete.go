@@ -6,7 +6,7 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"search",
 		map[string]autocomplete.CompleteFunc{
-			"f":                        autocomplete.InzureJSONAutoComplete,
+			"f":                        autocomplete.InzureJSONAutoComplete("-f"),
 			"o":                        autocomplete.FileAutoComplete,
 			autocomplete.Positional(1): autocomplete.IQSAutoComplete,
 		},
@@ -15,8 +15,8 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"diff",
 		map[string]autocomplete.CompleteFunc{
-			"new": autocomplete.InzureJSONAutoComplete,
-			"old": autocomplete.InzureJSONAutoComplete,
+			"new": autocomplete.InzureJSONAutoComplete("-new"),
+			"old": autocomplete.InzureJSONAutoComplete("-old"),
 			"o":   autocomplete.FileAutoComplete,
 		},
 	)
@@ -36,7 +36,7 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"attacksurface",
 		map[string]autocomplete.CompleteFunc{
-			"f": autocomplete.InzureJSONAutoComplete,
+			"f": autocomplete.InzureJSONAutoComplete("-f"),
 			"o": autocomplete.FileAutoComplete,
 		},
 	)
@@ -44,7 +44,7 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"dump",
 		map[string]autocomplete.CompleteFunc{
-			"f": autocomplete.InzureJSONAutoComplete,
+			"f": autocomplete.InzureJSONAutoComplete("-f"),
 			"o": autocomplete.FileAutoComplete,
 		},
 	)
@@ -52,7 +52,7 @@ func SetupAutoCompletions() {
 	autocomplete.AddCompletions(
 		"whitelist",
 		map[string]autocomplete.CompleteFunc{
-			"f": autocomplete.InzureJSONAutoComplete,
+			"f": autocomplete.InzureJSONAutoComplete("-f"),
 			"o": autocomplete.FileAutoComplete,
 		},
 	)
