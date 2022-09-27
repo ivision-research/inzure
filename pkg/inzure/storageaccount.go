@@ -30,6 +30,28 @@ const (
 	ContainerAccessContainer
 )
 
+func (perm ContainerPermission) IsPrivate() UnknownBool {
+    if perm == ContainerAccessUnknown {
+        return BoolUnknown
+    }
+    return UnknownFromBool(perm == ContainerAccessPrivate)
+}
+
+func (perm ContainerPermission) IsBlob() UnknownBool {
+    if perm == ContainerAccessUnknown {
+        return BoolUnknown
+    }
+    return UnknownFromBool(perm == ContainerAccessBlob)
+}
+
+
+func (perm ContainerPermission) IsContainer() UnknownBool {
+    if perm == ContainerAccessUnknown {
+        return BoolUnknown
+    }
+    return UnknownFromBool(perm == ContainerAccessContainer)
+}
+
 var (
 	blobURLFmt string
 )
