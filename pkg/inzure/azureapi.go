@@ -263,6 +263,19 @@ func sendErr(ctx context.Context, e error, ec chan<- error) bool {
 	}
 }
 
+func ignoreUnsupportedErrorTransform(sub string, tag AzureResourceTag, action string) func(err error) error {
+	return func(err error) error {
+		if v, is := err.(*azcore.ResponseError); is {
+			if v.StatusCode == http.StatusBadRequest {
+				if v.ErrorCode == "FeatureNotSupportedForAccount" {
+					return nil
+				}
+			}
+		}
+		return genericError(sub, tag, action, err)
+	}
+}
+
 func genericErrorTransform(sub string, tag AzureResourceTag, action string) func(err error) error {
 	return func(err error) error {
 		return genericError(sub, tag, action, err)
@@ -284,7 +297,10 @@ func handlePagerWaitGroup[Iz any, Az any](
 
 	if errTransform != nil {
 		onError = func(err error) {
-			sendErr(ctx, errTransform(err), errChan)
+			newErr := errTransform(err)
+			if newErr != nil {
+				sendErr(ctx, newErr, errChan)
+			}
 		}
 	} else {
 		onError = func(err error) {
@@ -2196,7 +2212,7 @@ func (impl *azureImpl) getFileShares(ctx context.Context, sa *StorageAccount, ec
 		return true, nil
 	}
 
-	return handlePager(ctx, getter, handler, genericErrorTransform(sub, FileShareT, "ListFileShares"), ec)
+	return handlePager(ctx, getter, handler, ignoreUnsupportedErrorTransform(sub, FileShareT, "ListFileShares"), ec)
 }
 
 func (impl *azureImpl) getContainers(ctx context.Context, sa *StorageAccount, ec chan<- error) <-chan *Container {
@@ -2230,7 +2246,7 @@ func (impl *azureImpl) getContainers(ctx context.Context, sa *StorageAccount, ec
 		}
 		return true, nil
 	}
-	return handlePager(ctx, getter, handler, genericErrorTransform(sub, ContainerT, "ListContainers"), ec)
+	return handlePager(ctx, getter, handler, ignoreUnsupportedErrorTransform(sub, ContainerT, "ListContainers"), ec)
 }
 
 func getTokenCredentials(opts *azcore.ClientOptions) (tokenCred azcore.TokenCredential, err error) {
