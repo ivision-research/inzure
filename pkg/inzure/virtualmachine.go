@@ -4,7 +4,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 )
 
-//go:generate go run gen/enum.go -prefix OsType -values Linux,Windows
+//go:generate go run gen/enum.go -prefix OsType -values Linux,Windows -azure-type OperatingSystemTypes -azure-values OperatingSystemTypesLinux,OperatingSystemTypesWindows -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute
 
 // VirtualMachine holds the data for a given Virtual Machine. note that this
 // type is intended to collect information about both new and classical VMs.
@@ -72,6 +72,7 @@ type SSHPublicKey struct {
 
 func (vm *VirtualMachine) FromAzure(az *armcompute.VirtualMachine) {
 	vm.Meta.setupEmpty()
+	vm.OsType = OsTypeUnknown
 	if az.ID != nil {
 		vm.Meta.fromID(*az.ID)
 	}
@@ -84,6 +85,10 @@ func (vm *VirtualMachine) FromAzure(az *armcompute.VirtualMachine) {
 		vm.loadOSProfile(props.OSProfile)
 	}
 
+	if props.StorageProfile != nil {
+		vm.loadStorageProfile(props.StorageProfile)
+	}
+
 	if props.NetworkProfile != nil {
 		vm.loadNetworkProfile(props.NetworkProfile)
 	}
@@ -92,6 +97,16 @@ func (vm *VirtualMachine) FromAzure(az *armcompute.VirtualMachine) {
 		vm.loadInstanceView(props.InstanceView)
 	}
 }
+
+func (vm *VirtualMachine) loadStorageProfile(sp *armcompute.StorageProfile) {
+	if vm.OsType.IsUnknown() {
+		disk := sp.OSDisk
+		if disk != nil {
+			vm.OsType.FromAzure(disk.OSType)
+		}
+	}
+}
+
 func (vm *VirtualMachine) loadInstanceView(iv *armcompute.VirtualMachineInstanceView) {
 	gValFromPtr(&vm.OsName, iv.OSName)
 	gValFromPtr(&vm.OsVersion, iv.OSVersion)

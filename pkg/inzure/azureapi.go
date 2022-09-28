@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
-	armcosmos "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v2"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-analytics/armdatalakeanalytics"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-store/armdatalakestore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
@@ -1752,6 +1753,12 @@ func (impl *azureImpl) GetWebApps(ctx context.Context, sub string, rg string, ec
 			it := NewEmptyWebApp()
 			it.FromAzure(azwa)
 
+			// Don't look for functions in non function apps. Wish this wasn't a string
+			// comparison but oh well.
+			if azwa.Kind != nil && !strings.Contains(strings.ToLower(*azwa.Kind), "functionapp") {
+				continue
+			}
+
 			wg.Add(1)
 			go impl.getWebAppFunctions(ctx, client, it, out, ec, &wg)
 		}
@@ -1764,7 +1771,7 @@ func (impl *azureImpl) GetWebApps(ctx context.Context, sub string, rg string, ec
 	return handlePager(ctx,
 		getter,
 		handler,
-		genericErrorTransform(sub, StorageAccountT, "ListStorageAccounts"),
+		genericErrorTransform(sub, WebAppT, "ListWebApps"),
 		ec,
 	)
 
@@ -2136,8 +2143,8 @@ func (impl *azureImpl) getStorageAccountElements(ctx context.Context, sa *Storag
 	defer wg.Done()
 
 	var innerWg sync.WaitGroup
-	innerWg.Add(2)
 
+	innerWg.Add(1)
 	go func() {
 		defer innerWg.Done()
 		for container := range impl.getContainers(ctx, sa, ec) {
@@ -2145,6 +2152,7 @@ func (impl *azureImpl) getStorageAccountElements(ctx context.Context, sa *Storag
 		}
 	}()
 
+	innerWg.Add(1)
 	go func() {
 		defer innerWg.Done()
 		for fs := range impl.getFileShares(ctx, sa, ec) {

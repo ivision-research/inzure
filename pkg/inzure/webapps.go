@@ -10,7 +10,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 )
 
-//go:generate go run gen/enum.go -type-name AppLanguage -prefix Language -values Node,PHP,Java,DotNet,Ruby,Python,Docker,PowerShell
+//go:generate go run gen/enum.go -type-name AppLanguage -prefix Language -values Node,PHP,Java,DotNet,Ruby,Python,Docker,PowerShell,FSharp,CSharp
 //go:generate go run gen/enum.go -prefix FTPState -values Disabled,FTPSOnly,All -azure-type FtpsState -azure-values FtpsStateDisabled,FtpsStateFtpsOnly,FtpsStateAllAllowed -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice -no-string
 //go:generate go run gen/enum.go -prefix WebAppClientCertMode -values Required,Optional,OptionalInteractiveUser -azure-type ClientCertMode -azure-values ClientCertModeRequired,ClientCertModeOptional,ClientCertModeOptionalInteractiveUser -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice
 
@@ -64,6 +64,10 @@ func (w *WebAppLanguage) FromAzureSiteConfig(az *armappservice.SiteConfig) {
 				w.Language = LanguageDocker
 			case "powershell":
 				w.Language = LanguagePowerShell
+			case "fsharp":
+				w.Language = LanguageFSharp
+			case "csharp":
+				w.Language = LanguageCSharp
 			default:
 				fmt.Fprintln(os.Stderr, "Unexpected language in linuxFxVersion:", lang)
 			}
@@ -230,6 +234,10 @@ func (f *Function) FromAzure(fe *armappservice.FunctionEnvelope) {
 			f.Language = LanguageDocker
 		case "powershell":
 			f.Language = LanguagePowerShell
+		case "fsharp":
+			f.Language = LanguageFSharp
+		case "csharp":
+			f.Language = LanguageCSharp
 		default:
 			fmt.Fprintln(os.Stderr, "Unexpected language in Function.Language:", *props.Language)
 		}
@@ -529,12 +537,9 @@ func (w *WebApp) fillConfigInfo(conf *armappservice.SiteConfig) {
 
 	w.FTPState.FromAzure(conf.FtpsState)
 
-	if conf.MinTLSVersion != nil && w.MinTLSVersion == TLSVersionUnknown {
-		w.MinTLSVersion.FromAzureWeb(*conf.MinTLSVersion)
-	}
-	if conf.ScmMinTLSVersion != nil {
-		w.SCMMinTLSVersion.FromAzureWeb(*conf.ScmMinTLSVersion)
-	}
+	w.MinTLSVersion.FromAzureWeb(conf.MinTLSVersion)
+	w.SCMMinTLSVersion.FromAzureWeb(conf.ScmMinTLSVersion)
+
 	gValFromPtr(&w.VirtualNetworkName, conf.VnetName)
 }
 
