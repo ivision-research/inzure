@@ -33,18 +33,28 @@ func (it *FileShareProtocol) FromAzure(az *azpkg.EnabledProtocols) {
 		*it = FileShareProtocolUnknown
 	}
 }
+func (it FileShareProtocol) IsUnknown() bool {
+	return it == FileShareProtocolUnknown
+}
+
+func (it FileShareProtocol) IsKnown() bool {
+	return it != FileShareProtocolUnknown
+}
+
 func (it FileShareProtocol) IsNFS() UnknownBool {
 	if it == FileShareProtocolUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == FileShareProtocolNFS)
 }
+
 func (it FileShareProtocol) IsSMB() UnknownBool {
 	if it == FileShareProtocolUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == FileShareProtocolSMB)
 }
+
 
 func (it FileShareProtocol) String() string {
 	switch (it) {

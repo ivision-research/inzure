@@ -20,54 +20,70 @@ const (
     LanguagePowerShell AppLanguage = 8
 )
 
+func (it AppLanguage) IsUnknown() bool {
+	return it == LanguageUnknown
+}
+
+func (it AppLanguage) IsKnown() bool {
+	return it != LanguageUnknown
+}
+
 func (it AppLanguage) IsNode() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguageNode)
 }
+
 func (it AppLanguage) IsPHP() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguagePHP)
 }
+
 func (it AppLanguage) IsJava() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguageJava)
 }
+
 func (it AppLanguage) IsDotNet() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguageDotNet)
 }
+
 func (it AppLanguage) IsRuby() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguageRuby)
 }
+
 func (it AppLanguage) IsPython() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguagePython)
 }
+
 func (it AppLanguage) IsDocker() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguageDocker)
 }
+
 func (it AppLanguage) IsPowerShell() UnknownBool {
 	if it == LanguageUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == LanguagePowerShell)
 }
+
 
 func (it AppLanguage) String() string {
 	switch (it) {

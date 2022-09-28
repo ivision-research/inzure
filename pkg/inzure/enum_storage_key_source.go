@@ -33,18 +33,28 @@ func (it *StorageKeySource) FromAzure(az *azpkg.KeySource) {
 		*it = StorageKeySourceUnknown
 	}
 }
+func (it StorageKeySource) IsUnknown() bool {
+	return it == StorageKeySourceUnknown
+}
+
+func (it StorageKeySource) IsKnown() bool {
+	return it != StorageKeySourceUnknown
+}
+
 func (it StorageKeySource) IsStorage() UnknownBool {
 	if it == StorageKeySourceUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == StorageKeySourceStorage)
 }
+
 func (it StorageKeySource) IsKeyVault() UnknownBool {
 	if it == StorageKeySourceUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == StorageKeySourceKeyVault)
 }
+
 
 func (it StorageKeySource) String() string {
 	switch (it) {

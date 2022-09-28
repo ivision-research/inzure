@@ -3,7 +3,10 @@
 package inzure
 
 
-import "fmt"
+import (
+	"fmt"
+	azpkg "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
+)
 
 
 type OsType int
@@ -14,18 +17,44 @@ const (
     OsTypeWindows OsType = 2
 )
 
+
+
+func (it *OsType) FromAzure(az *azpkg.OperatingSystemTypes) {
+	if (az == nil) {
+		*it = OsTypeUnknown
+		return
+	}
+	switch(*az) {
+	case azpkg.OperatingSystemTypesLinux:
+		*it = OsTypeLinux
+	case azpkg.OperatingSystemTypesWindows:
+		*it = OsTypeWindows
+	default:
+		*it = OsTypeUnknown
+	}
+}
+func (it OsType) IsUnknown() bool {
+	return it == OsTypeUnknown
+}
+
+func (it OsType) IsKnown() bool {
+	return it != OsTypeUnknown
+}
+
 func (it OsType) IsLinux() UnknownBool {
 	if it == OsTypeUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == OsTypeLinux)
 }
+
 func (it OsType) IsWindows() UnknownBool {
 	if it == OsTypeUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == OsTypeWindows)
 }
+
 
 func (it OsType) String() string {
 	switch (it) {

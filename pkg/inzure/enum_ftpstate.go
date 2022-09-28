@@ -35,22 +35,33 @@ func (it *FTPState) FromAzure(az *azpkg.FtpsState) {
 		*it = FTPStateUnknown
 	}
 }
+func (it FTPState) IsUnknown() bool {
+	return it == FTPStateUnknown
+}
+
+func (it FTPState) IsKnown() bool {
+	return it != FTPStateUnknown
+}
+
 func (it FTPState) IsDisabled() UnknownBool {
 	if it == FTPStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == FTPStateDisabled)
 }
+
 func (it FTPState) IsFTPSOnly() UnknownBool {
 	if it == FTPStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == FTPStateFTPSOnly)
 }
+
 func (it FTPState) IsAll() UnknownBool {
 	if it == FTPStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == FTPStateAll)
 }
+
 

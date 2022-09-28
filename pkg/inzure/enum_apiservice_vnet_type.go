@@ -40,13 +40,16 @@ func (it APIServiceVNetType) IsNone() bool {
 	return it == APIServiceVNetTypeNone
 }
 
+
 func (it APIServiceVNetType) IsExternal() bool {
 	return it == APIServiceVNetTypeExternal
 }
 
+
 func (it APIServiceVNetType) IsInternal() bool {
 	return it == APIServiceVNetTypeInternal
 }
+
 
 func (it APIServiceVNetType) String() string {
 	switch (it) {

@@ -218,6 +218,16 @@ func (it *{{ $typeName }}) FromAzure(az *azpkg.{{ .AzureType }}) {
 {{ end -}}
 
 {{ if .GenIsFunctions -}}
+{{ if $hasUnknown -}}
+func (it {{ $typeName }}) IsUnknown() bool {
+	return it == {{ $unknownValue }}
+}
+
+func (it {{ $typeName }}) IsKnown() bool {
+	return it != {{ $unknownValue }}
+}
+
+{{ end -}}
 {{ range .Values -}}
 {{ if $hasUnknown -}}
 func (it {{ $typeName }}) Is{{ .ShortName }}() UnknownBool {
@@ -226,10 +236,12 @@ func (it {{ $typeName }}) Is{{ .ShortName }}() UnknownBool {
 	}
 	return UnknownFromBool(it == {{ .Name }})
 }
+
 {{ else }}
 func (it {{ $typeName }}) Is{{ .ShortName }}() bool {
 	return it == {{ .Name }}
 }
+
 {{ end -}}
 {{ end -}}
 {{ end -}}

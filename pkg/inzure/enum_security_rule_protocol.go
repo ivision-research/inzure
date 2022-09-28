@@ -35,22 +35,33 @@ func (it *SecurityRuleProtocol) FromAzure(az *azpkg.SecurityRuleProtocol) {
 		*it = ProtocolUnknown
 	}
 }
+func (it SecurityRuleProtocol) IsUnknown() bool {
+	return it == ProtocolUnknown
+}
+
+func (it SecurityRuleProtocol) IsKnown() bool {
+	return it != ProtocolUnknown
+}
+
 func (it SecurityRuleProtocol) IsAll() UnknownBool {
 	if it == ProtocolUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ProtocolAll)
 }
+
 func (it SecurityRuleProtocol) IsTCP() UnknownBool {
 	if it == ProtocolUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ProtocolTCP)
 }
+
 func (it SecurityRuleProtocol) IsUDP() UnknownBool {
 	if it == ProtocolUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ProtocolUDP)
 }
+
 

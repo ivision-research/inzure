@@ -39,30 +39,42 @@ func (it *APIUserActivationState) FromAzure(az *azpkg.UserState) {
 		*it = APIUserStateUnknown
 	}
 }
+func (it APIUserActivationState) IsUnknown() bool {
+	return it == APIUserStateUnknown
+}
+
+func (it APIUserActivationState) IsKnown() bool {
+	return it != APIUserStateUnknown
+}
+
 func (it APIUserActivationState) IsActive() UnknownBool {
 	if it == APIUserStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == APIUserStateActive)
 }
+
 func (it APIUserActivationState) IsPending() UnknownBool {
 	if it == APIUserStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == APIUserStatePending)
 }
+
 func (it APIUserActivationState) IsBlocked() UnknownBool {
 	if it == APIUserStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == APIUserStateBlocked)
 }
+
 func (it APIUserActivationState) IsDeleted() UnknownBool {
 	if it == APIUserStateUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == APIUserStateDeleted)
 }
+
 
 func (it APIUserActivationState) String() string {
 	switch (it) {

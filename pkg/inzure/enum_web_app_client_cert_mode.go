@@ -36,24 +36,35 @@ func (it *WebAppClientCertMode) FromAzure(az *azpkg.ClientCertMode) {
 		*it = WebAppClientCertModeUnknown
 	}
 }
+func (it WebAppClientCertMode) IsUnknown() bool {
+	return it == WebAppClientCertModeUnknown
+}
+
+func (it WebAppClientCertMode) IsKnown() bool {
+	return it != WebAppClientCertModeUnknown
+}
+
 func (it WebAppClientCertMode) IsRequired() UnknownBool {
 	if it == WebAppClientCertModeUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == WebAppClientCertModeRequired)
 }
+
 func (it WebAppClientCertMode) IsOptional() UnknownBool {
 	if it == WebAppClientCertModeUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == WebAppClientCertModeOptional)
 }
+
 func (it WebAppClientCertMode) IsOptionalInteractiveUser() UnknownBool {
 	if it == WebAppClientCertModeUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == WebAppClientCertModeOptionalInteractiveUser)
 }
+
 
 func (it WebAppClientCertMode) String() string {
 	switch (it) {

@@ -36,24 +36,35 @@ func (it *ContainerPermission) FromAzure(az *azpkg.PublicAccess) {
 		*it = ContainerPermissionUnknown
 	}
 }
+func (it ContainerPermission) IsUnknown() bool {
+	return it == ContainerPermissionUnknown
+}
+
+func (it ContainerPermission) IsKnown() bool {
+	return it != ContainerPermissionUnknown
+}
+
 func (it ContainerPermission) IsPrivate() UnknownBool {
 	if it == ContainerPermissionUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ContainerPermissionPrivate)
 }
+
 func (it ContainerPermission) IsBlob() UnknownBool {
 	if it == ContainerPermissionUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ContainerPermissionBlob)
 }
+
 func (it ContainerPermission) IsContainer() UnknownBool {
 	if it == ContainerPermissionUnknown {
 		return BoolUnknown
 	}
 	return UnknownFromBool(it == ContainerPermissionContainer)
 }
+
 
 func (it ContainerPermission) String() string {
 	switch (it) {
