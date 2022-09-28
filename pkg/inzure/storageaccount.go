@@ -3,6 +3,7 @@ package inzure
 //go:generate go run gen/enum.go -prefix ContainerPermission -values Private,Blob,Container -azure-type PublicAccess -azure-values PublicAccessNone,PublicAccessBlob,PublicAccessContainer -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 //go:generate go run gen/enum.go -prefix StorageKeySource -values Storage,KeyVault -azure-type KeySource -azure-values KeySourceMicrosoftStorage,KeySourceMicrosoftKeyvault -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 //go:generate go run gen/enum.go -prefix FileShareProtocol -values NFS,SMB -azure-type EnabledProtocols -azure-values EnabledProtocolsNFS,EnabledProtocolsSMB -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+//go:generate go run gen/enum.go -prefix StorageAccountKind -values BlobStorage,BlockBlobStorage,FileStorage,Storage,StorageV2 -azure-type Kind -azure-values KindBlobStorage,KindBlockBlobStorage,KindFileStorage,KindStorage,KindStorageV2 -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 
 import (
 	"fmt"
@@ -83,6 +84,7 @@ func (se *StorageEncryption) FromAzure(enc *armstorage.Encryption) {
 // information and they've been deprecated by Azure for a LONG time.
 type StorageAccount struct {
 	Meta          ResourceID
+	Kind          StorageAccountKind
 	IsClassic     bool
 	CustomDomain  string
 	Encryption    StorageEncryption
@@ -190,6 +192,7 @@ func (sa *StorageAccount) FromAzure(acc *armstorage.Account) {
 	if acc.ID != nil {
 		sa.Meta.fromID(*acc.ID)
 	}
+	sa.Kind.FromAzure(acc.Kind)
 	if acc.Properties != nil {
 		sa.MinTLSVersion.FromAzureStorage(acc.Properties.MinimumTLSVersion)
 		sa.Encryption.FromAzure(acc.Properties.Encryption)
