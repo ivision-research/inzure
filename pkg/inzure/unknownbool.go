@@ -54,6 +54,14 @@ func (ub UnknownBool) True() bool {
 	return ub == BoolTrue
 }
 
+func (ub UnknownBool) TrueOrUnknown() bool {
+	return ub == BoolTrue || ub == BoolUnknown
+}
+
+func (ub UnknownBool) FalseOrUnknown() bool {
+	return ub == BoolFalse || ub == BoolUnknown
+}
+
 // False returns true if the UnknownBool is BoolFalse
 func (ub UnknownBool) False() bool {
 	return ub == BoolFalse
