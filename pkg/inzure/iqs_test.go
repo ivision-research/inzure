@@ -11,29 +11,29 @@ func testSimpleBaseQS(t *testing.T, qs string) {
 	val, err := testSub.ReflectFromQueryString(qs)
 	if err != nil {
 		t.Fatal(err)
+	}
 
-		for val.Kind() == reflect.Ptr {
-			val = val.Elem()
-		}
-		l := val.Len()
-		fieldName := strings.Replace(qs, "/", "", 1)
-		for i := 0; i < l; i++ {
-			search := val.Index(i).Interface()
-			found := false
-			for _, rg := range testSub.ResourceGroups {
-				rgAll := reflect.ValueOf(*rg).FieldByName(fieldName)
-				rgL := rgAll.Len()
-				for j := 0; j < rgL; j++ {
-					test := rgAll.Index(j).Interface()
-					if reflect.DeepEqual(search, test) {
-						found = true
-						break
-					}
+	for val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	l := val.Len()
+	fieldName := strings.Replace(qs, "/", "", 1)
+	for i := 0; i < l; i++ {
+		search := val.Index(i).Interface()
+		found := false
+		for _, rg := range testSub.ResourceGroups {
+			rgAll := reflect.ValueOf(*rg).FieldByName(fieldName)
+			rgL := rgAll.Len()
+			for j := 0; j < rgL; j++ {
+				test := rgAll.Index(j).Interface()
+				if reflect.DeepEqual(search, test) {
+					found = true
+					break
 				}
 			}
-			if !found {
-				t.Fatalf("QS returned %v but it couldn't be found", search)
-			}
+		}
+		if !found {
+			t.Fatalf("QS returned %v but it couldn't be found", search)
 		}
 	}
 }
@@ -129,19 +129,21 @@ func TestBadQSFail(t *testing.T) {
 		"/WebApps[.HTTPSOnly = BoolFalse]",           // = instead of ==
 		"/WebApps[.HTTPSOnly == bOOlFaLse]",          // case sensitivity
 		"/WebApps[HTTPSOnly == BoolFalse]",           // bad field selector (no .)
-		"/WebApps[.NonExistentMethod() == 1]",
+		"/WebApps[.NonExistentMethod() == 1]",        // Nonexistent method
+
+		"/NetworkSecurityGroups[.AllowsIPToPortString(\"12.34.56.78\", \"22\").Sel == 5]", // .Sel after method call
 	}
 	for _, qs := range badQSs {
-		_, err := testSub.ReflectFromQueryString(qs)
+		val, err := testSub.ReflectFromQueryString(qs)
 		if err == nil {
-			t.Fatalf("qs %s should have failed but didn't", qs)
+			t.Fatalf("qs %s should have failed but didn't, instead got %v", qs, val)
 		}
 	}
 }
 
 func TestQSMethodCall(t *testing.T) {
 	qs := "/NetworkSecurityGroups[.AllowsIPToPortString(\"12.34.56.78\", \"22\")[0] == BoolTrue]"
-	into := make([]*NetworkSecurityGroup, 0, 5)
+	into := make([]*NetworkSecurityGroup, 0, 1)
 	err := testSub.FromQueryString(qs, &into)
 	if err != nil {
 		t.Fatalf("Failed to execute query string %s: %v", qs, err)
@@ -151,7 +153,7 @@ func TestQSMethodCall(t *testing.T) {
 	} else if len(into) > 1 {
 		t.Fatalf("Should have had only one returned value for %s", qs)
 	}
-	if into[0].Meta.Name != "inzure-nsg-3" {
+	if into[0].Meta.Name != "nsgAA" {
 		t.Fatalf("Got the wrong NSG: %s", into[0].Meta.Name)
 	}
 

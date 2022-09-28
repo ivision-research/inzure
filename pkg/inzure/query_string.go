@@ -102,6 +102,65 @@ func (p *QueryString) ContainsString(s string) bool {
 	return p.ContainsIQS(&oqs)
 }
 
+// Validate ensures that the query string is actually valid.
+func (qs *QueryString) Validate() error {
+	if qs.Sel.Resource == "" {
+		return errors.New("query string doesn't specify a resource")
+	}
+	ty, canFind := qs.GetReturnType()
+	if !canFind {
+		return errors.New("query string contains invalid selector")
+	}
+	if qs.Sel.Condition == nil {
+		return nil
+	}
+	return validCondition(getBaseType(ty), qs.Sel.Condition)
+}
+
+func validCondition(ty reflect.Type, cond *QSCondition) error {
+	if cmp, is := cond.Cmp.(*QSComparer); is {
+		checkTy := ty
+		field := &cmp.Fields
+		for field != nil {
+			if field.IsMethod {
+				if !typeHasMethod(checkTy, field.Name, false) {
+					return fmt.Errorf("type %s does not have method %s", checkTy.Name(), field.Name)
+				}
+				// No selectors allowed after a method for now
+				if field.Next != nil {
+					return errors.New("selectors not allowed after method call")
+				}
+				break
+			}
+			sf, has := checkTy.FieldByName(field.Name)
+			if !has {
+				return fmt.Errorf("type %s does not have field %s", checkTy.Name(), field.Name)
+			}
+
+			if field.Next == nil {
+				break
+			}
+
+			field = field.Next
+			if field.IsArray {
+				if sf.Type.Kind() != reflect.Slice {
+					return fmt.Errorf("type %s field %s is not a slice", checkTy.Name(), field.Name)
+				}
+			}
+			checkTy = getBaseType(sf.Type)
+		}
+	}
+	if cond.And != nil {
+		if err := validCondition(ty, cond.And); err != nil {
+			return err
+		}
+	}
+	if cond.Or != nil {
+		return validCondition(ty, cond.Or)
+	}
+	return nil
+}
+
 // GetReturnType returns the reflect.Type that should be returned by this
 // query string when used with a Subscription.
 func (qs *QueryString) GetReturnType() (reflect.Type, bool) {

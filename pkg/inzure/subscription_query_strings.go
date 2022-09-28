@@ -66,6 +66,9 @@ func (s *Subscription) ValueFromQueryString(qs string, v reflect.Value) error {
 }
 
 func (s *Subscription) valueFromQueryString(qs *QueryString, v reflect.Value) error {
+	if err := qs.Validate(); err != nil {
+		return err
+	}
 	if qs.Subresource != nil {
 		return s.subresourceValueFromQueryString(qs, v)
 	}

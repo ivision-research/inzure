@@ -8,6 +8,28 @@ import (
 	"unicode/utf8"
 )
 
+func getBaseType(ty reflect.Type) reflect.Type {
+	for ty.Kind() == reflect.Ptr || ty.Kind() == reflect.Slice {
+		ty = ty.Elem()
+	}
+	return ty
+}
+
+func typeHasMethod(ty reflect.Type, method string, nonPtr bool) bool {
+	if ty.Kind() != reflect.Struct {
+		ty = getBaseType(ty)
+		if ty.Kind() != reflect.Struct {
+			return false
+		}
+	}
+	_, has := ty.MethodByName(method)
+	if !has && nonPtr {
+		return false
+	}
+	_, has = reflect.PtrTo(ty).MethodByName(method)
+	return has
+}
+
 // derefPtr will keep calling Elem() until we no longer have a reflect.Ptr
 // Kind()
 func derefPtr(v reflect.Value) reflect.Value {
