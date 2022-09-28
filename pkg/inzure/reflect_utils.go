@@ -16,14 +16,11 @@ func getBaseType(ty reflect.Type) reflect.Type {
 }
 
 func typeHasMethod(ty reflect.Type, method string, nonPtr bool) bool {
-	if ty.Kind() != reflect.Struct {
-		ty = getBaseType(ty)
-		if ty.Kind() != reflect.Struct {
-			return false
-		}
-	}
 	_, has := ty.MethodByName(method)
-	if !has && nonPtr {
+	if has {
+		return true
+	}
+	if nonPtr {
 		return false
 	}
 	_, has = reflect.PtrTo(ty).MethodByName(method)

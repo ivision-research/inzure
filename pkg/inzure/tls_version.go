@@ -1,23 +1,13 @@
 package inzure
 
+//go:generate go run gen/enum.go -prefix TLSVersion -values OneZero,OneOne,OneTwo -no-string
+
 import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
-)
-
-// TLSVersion just makes TLS version logging and comparisons easier. This
-// is essentially just translating Azure's enum type into our own.
-type TLSVersion uint
-
-const (
-	// TLSVersionUnknown is for when we failed to get a TLS version
-	TLSVersionUnknown TLSVersion = iota
-	TLSVersionOneZero
-	TLSVersionOneOne
-	TLSVersionOneTwo
 )
 
 func (t *TLSVersion) FromAzureStorage(az *armstorage.MinimumTLSVersion) {
@@ -37,8 +27,12 @@ func (t *TLSVersion) FromAzureStorage(az *armstorage.MinimumTLSVersion) {
 	}
 }
 
-func (t *TLSVersion) FromAzureWeb(az armappservice.SupportedTLSVersions) {
-	switch az {
+func (t *TLSVersion) FromAzureWeb(az *armappservice.SupportedTLSVersions) {
+	if az == nil {
+		*t = TLSVersionOneTwo
+		return
+	}
+	switch *az {
 	case armappservice.SupportedTLSVersionsOne0:
 		*t = TLSVersionOneZero
 	case armappservice.SupportedTLSVersionsOne1:
@@ -52,7 +46,7 @@ func (t *TLSVersion) FromAzureWeb(az armappservice.SupportedTLSVersions) {
 
 func (t *TLSVersion) FromAzureRedis(az *armredis.TLSVersion) {
 	if az == nil {
-		*t = TLSVersionUnknown
+		*t = TLSVersionOneZero
 		return
 	}
 	switch *az {

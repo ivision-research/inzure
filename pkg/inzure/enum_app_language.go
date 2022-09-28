@@ -18,6 +18,8 @@ const (
     LanguagePython AppLanguage = 6
     LanguageDocker AppLanguage = 7
     LanguagePowerShell AppLanguage = 8
+    LanguageFSharp AppLanguage = 9
+    LanguageCSharp AppLanguage = 10
 )
 
 func (it AppLanguage) IsUnknown() bool {
@@ -84,6 +86,20 @@ func (it AppLanguage) IsPowerShell() UnknownBool {
 	return UnknownFromBool(it == LanguagePowerShell)
 }
 
+func (it AppLanguage) IsFSharp() UnknownBool {
+	if it == LanguageUnknown {
+		return BoolUnknown
+	}
+	return UnknownFromBool(it == LanguageFSharp)
+}
+
+func (it AppLanguage) IsCSharp() UnknownBool {
+	if it == LanguageUnknown {
+		return BoolUnknown
+	}
+	return UnknownFromBool(it == LanguageCSharp)
+}
+
 
 func (it AppLanguage) String() string {
 	switch (it) {
@@ -103,6 +119,10 @@ func (it AppLanguage) String() string {
 		return "Docker"
 	case LanguagePowerShell:
 		return "PowerShell"
+	case LanguageFSharp:
+		return "FSharp"
+	case LanguageCSharp:
+		return "CSharp"
 	default:
 		return fmt.Sprintf("AppLanguage(%d)", it)
 	}
