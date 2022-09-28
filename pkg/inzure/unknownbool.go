@@ -40,11 +40,6 @@ func (ub UnknownBool) String() string {
 	}
 }
 
-// DEPRECATED: use the exported function
-func unknownFromBool(b bool) UnknownBool {
-	return UnknownFromBool(b)
-}
-
 // UnknownFromBool is a convenience function for turning a bool into an
 // UnknownBool.
 func UnknownFromBool(b bool) UnknownBool {
@@ -111,7 +106,7 @@ func ubFromRhsPtr[T comparable](lhs T, rhs *T) UnknownBool {
 	if rhs == nil {
 		return BoolUnknown
 	}
-	return unknownFromBool(lhs == *rhs)
+	return UnknownFromBool(lhs == *rhs)
 }
 
 func (ub *UnknownBool) FromStringPtrEq(lhs string, rhs *string) {

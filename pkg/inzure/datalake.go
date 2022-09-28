@@ -6,12 +6,12 @@ import (
 )
 
 // TODO: The Azure data structure for DataLakeAnalytics claims to return an ID
-// for the linked StorageAccounts and DataLakeStores, but from what I've seen
-// it is always nil and instead we only get a name + suffix to give us the URL.
-// This does uniquely identify the resources, but it isn't in line with how
-// we've been storing references as ResourceID structs. I need to think of how
-// I want to do this. It is possible to store this URL and use it later on a
-// lookup of endpoints to get the ResourceIDs.
+//  for the linked StorageAccounts and DataLakeStores, but from what I've seen
+//  it is always nil and instead we only get a name + suffix to give us the URL.
+//  This does uniquely identify the resources, but it isn't in line with how
+//  we've been storing references as ResourceID structs. I need to think of how
+//  I want to do this. It is possible to store this URL and use it later on a
+//  lookup of endpoints to get the ResourceIDs.
 
 // DataLakeAnalytics holds the import information for a Data Lake analytics
 // acount

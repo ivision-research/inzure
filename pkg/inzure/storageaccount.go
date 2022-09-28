@@ -1,5 +1,9 @@
 package inzure
 
+//go:generate go run gen/enum.go -prefix ContainerPermission -values Private,Blob,Container -azure-type PublicAccess -azure-values PublicAccessNone,PublicAccessBlob,PublicAccessContainer -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+//go:generate go run gen/enum.go -prefix StorageKeySource -values Storage,KeyVault -azure-type KeySource -azure-values KeySourceMicrosoftStorage,KeySourceMicrosoftKeyvault -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+//go:generate go run gen/enum.go -prefix FileShareProtocol -values NFS,SMB -azure-type EnabledProtocols -azure-values EnabledProtocolsNFS,EnabledProtocolsSMB -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+
 import (
 	"fmt"
 	"os"
@@ -8,44 +12,6 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/azure-sdk-for-go/services/classic/management/storageservice"
 )
-
-// ContainerPermission is the read permission on the container
-type ContainerPermission uint8
-
-const (
-	// ContainerAccessUnknown is a place holder for unknown permission
-	ContainerAccessUnknown ContainerPermission = iota
-	// ContainerAccessPrivate means the container only allows authenticated
-	// access
-	ContainerAccessPrivate
-	// ContainerAccessBlob means the contain allows public access on blobs
-	ContainerAccessBlob
-	// ContainerAccessContainer means the contain allows public access on the
-	// container itself
-	ContainerAccessContainer
-)
-
-func (perm ContainerPermission) IsPrivate() UnknownBool {
-    if perm == ContainerAccessUnknown {
-        return BoolUnknown
-    }
-    return UnknownFromBool(perm == ContainerAccessPrivate)
-}
-
-func (perm ContainerPermission) IsBlob() UnknownBool {
-    if perm == ContainerAccessUnknown {
-        return BoolUnknown
-    }
-    return UnknownFromBool(perm == ContainerAccessBlob)
-}
-
-
-func (perm ContainerPermission) IsContainer() UnknownBool {
-    if perm == ContainerAccessUnknown {
-        return BoolUnknown
-    }
-    return UnknownFromBool(perm == ContainerAccessContainer)
-}
 
 var (
 	blobURLFmt string
@@ -74,35 +40,6 @@ func init() {
 	}
 }
 
-func (cp *ContainerPermission) FromAzure(az *armstorage.PublicAccess) {
-	if az == nil {
-		// TODO this might default to private if unset, so check here?
-		*cp = ContainerAccessUnknown
-		return
-	}
-	switch *az {
-	case armstorage.PublicAccessContainer:
-		*cp = ContainerAccessContainer
-	case armstorage.PublicAccessBlob:
-		*cp = ContainerAccessBlob
-	case armstorage.PublicAccessNone:
-		*cp = ContainerAccessPrivate
-	default:
-		*cp = ContainerAccessUnknown
-	}
-}
-
-type StorageKeySource uint8
-
-const (
-	// StorageKeySourceUnknown is a place holder for an unknown source
-	StorageKeySourceUnknown StorageKeySource = iota
-
-	StorageKeySourceStorage
-
-	StorageKeySourceKeyVault
-)
-
 // StorageEncryption specifies which services are encrypted in the storage
 // account
 type StorageEncryption struct {
@@ -124,10 +61,10 @@ func (se *StorageEncryption) FromAzure(enc *armstorage.Encryption) {
 	}
 
 	if enc.Services != nil {
-		se.Blob = unknownFromBool(enc.Services.Blob != nil)
-		se.File = unknownFromBool(enc.Services.File != nil)
-		se.Table = unknownFromBool(enc.Services.Table != nil)
-		se.Queue = unknownFromBool(enc.Services.Queue != nil)
+		se.Blob = UnknownFromBool(enc.Services.Blob != nil)
+		se.File = UnknownFromBool(enc.Services.File != nil)
+		se.Table = UnknownFromBool(enc.Services.Table != nil)
+		se.Queue = UnknownFromBool(enc.Services.Queue != nil)
 	} else {
 		se.Queue = BoolFalse
 		se.File = BoolFalse
@@ -135,18 +72,7 @@ func (se *StorageEncryption) FromAzure(enc *armstorage.Encryption) {
 		se.Table = BoolFalse
 	}
 
-	if enc.KeySource != nil {
-		switch *enc.KeySource {
-		case armstorage.KeySourceMicrosoftKeyvault:
-			se.KeySource = StorageKeySourceKeyVault
-		case armstorage.KeySourceMicrosoftStorage:
-			se.KeySource = StorageKeySourceStorage
-		default:
-			se.KeySource = StorageKeySourceUnknown
-		}
-	} else {
-		se.KeySource = StorageKeySourceUnknown
-	}
+	se.KeySource.FromAzure(enc.KeySource)
 }
 
 // StorageAccount contains the Container, Queue, and File types associated
@@ -176,14 +102,6 @@ func NewEmptyStorageAccount() *StorageAccount {
 	}
 }
 
-type FileShareProtocol uint8
-
-const (
-	FileShareProtocolUnknown FileShareProtocol = iota
-	FileShareProtocolNFS
-	FileShareProtocolSMB
-)
-
 type FileShareAccessPolicy struct {
 	ID          string
 	StartTime   time.Time
@@ -198,21 +116,6 @@ func (fsap *FileShareAccessPolicy) FromAzure(az *armstorage.SignedIdentifier) {
 		gValFromPtr(&fsap.Permissions, pol.Permission)
 		gValFromPtr(&fsap.StartTime, pol.StartTime)
 		gValFromPtr(&fsap.ExpiryTime, pol.ExpiryTime)
-	}
-}
-
-func (fsp *FileShareProtocol) FromAzure(az *armstorage.EnabledProtocols) {
-	if az == nil {
-		*fsp = FileShareProtocolUnknown
-		return
-	}
-	switch *az {
-	case armstorage.EnabledProtocolsNFS:
-		*fsp = FileShareProtocolNFS
-	case armstorage.EnabledProtocolsSMB:
-		*fsp = FileShareProtocolSMB
-	default:
-		*fsp = FileShareProtocolUnknown
 	}
 }
 
@@ -300,7 +203,7 @@ func (sa *StorageAccount) FromAzure(acc *armstorage.Account) {
 }
 
 // TODO: I don't think classic has any way to check for encryption, we might
-// need to use the more recent service for this?
+//  need to use the more recent service for this?
 func (sa *StorageAccount) FromAzureClassic(acc *storageservice.StorageServiceResponse) {
 	sa.Meta.setupEmpty()
 	sa.Meta.fromClassicURL(acc.URL)

@@ -222,7 +222,7 @@ func (s *ipv4Impl) ContainsUint32(v uint32) UnknownBool {
 		}
 		return BoolFalse
 	}
-	return unknownFromBool(s.containsUint32(v))
+	return UnknownFromBool(s.containsUint32(v))
 }
 
 func (s *ipv4Impl) ContainsRangeUint32(begin uint32, end uint32) UnknownBool {
@@ -240,7 +240,7 @@ func (s *ipv4Impl) ContainsRangeUint32(begin uint32, end uint32) UnknownBool {
 		}
 		return BoolFalse
 	}
-	return unknownFromBool(s.containsRangeUint32(begin, end))
+	return UnknownFromBool(s.containsRangeUint32(begin, end))
 }
 
 func (s *ipv4Impl) ContainsRange(begin string, end string) UnknownBool {
@@ -736,7 +736,7 @@ func (s *ipv4Impl) Contains(o string) UnknownBool {
 		}
 		return BoolFalse
 	}
-	return unknownFromBool(s.containsUint32(v))
+	return UnknownFromBool(s.containsUint32(v))
 }
 
 func (s *ipv4Impl) unset() {
@@ -1017,7 +1017,7 @@ func (u uint32Sortable) Less(i, j int) bool { return u[i] < u[j] }
 // since it doesn't want to allocate large slices.
 func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 	if a == nil {
-		return unknownFromBool(b == nil)
+		return UnknownFromBool(b == nil)
 	}
 
 	if b == nil {
@@ -1038,11 +1038,11 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 			if ret != nil && len(ret) == 1 {
 				b := ret[0]
 				if b.IsValid() && b.Type().Kind() == reflect.Bool {
-					return unknownFromBool(b.Bool())
+					return UnknownFromBool(b.Bool())
 				}
 			}
 		}
-		return unknownFromBool(reflect.DeepEqual(av, bv))
+		return UnknownFromBool(reflect.DeepEqual(av, bv))
 	}
 
 	// Special can really only be handled by the underlying type, so if we
@@ -1060,7 +1060,7 @@ func IPsEqual(a AzureIPv4, b AzureIPv4) UnknownBool {
 		if bCont != BoolTrue {
 			return BoolFalse
 		}
-		return unknownFromBool(aStart == bStart && aEnd == bEnd)
+		return UnknownFromBool(aStart == bStart && aEnd == bEnd)
 	}
 	bCont, _, _ := b.ContinuousRangeUint32()
 	if bCont == BoolTrue {
@@ -1129,7 +1129,7 @@ func IPContains(in AzureIPv4, find AzureIPv4) UnknownBool {
 	// If they're both special, we know that they are equal for our purposes.
 	if in.IsSpecial() {
 		if find.IsSpecial() {
-			return unknownFromBool(in.GetType() == find.GetType())
+			return UnknownFromBool(in.GetType() == find.GetType())
 		}
 		// One case that is obvious here is if find is *, we know * isn't
 		// contained in any Specials.

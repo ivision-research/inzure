@@ -4,6 +4,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 )
 
+//go:generate go run gen/enum.go -prefix OsType -values Linux,Windows
+
 // VirtualMachine holds the data for a given Virtual Machine. note that this
 // type is intended to collect information about both new and classical VMs.
 type VirtualMachine struct {
@@ -23,14 +25,6 @@ type VirtualMachine struct {
 	OsType                  OsType
 	Disks                   []VMDisk
 }
-
-type OsType uint8
-
-const (
-	OsTypeUnknown OsType = iota
-	OsTypeLinux
-	OsTypeWindows
-)
 
 // DiskEncryption holds the location of an encryption key and whether that key
 // is enabled for the given disk
@@ -159,7 +153,7 @@ func (vm *VirtualMachine) loadOSProfile(os *armcompute.OSProfile) {
 		// TODO: I think this is always false..?
 		vm.DisablePasswordAuth = BoolFalse
 		if win.EnableAutomaticUpdates != nil {
-			vm.AutomaticUpdates = unknownFromBool(*win.EnableAutomaticUpdates)
+			vm.AutomaticUpdates = UnknownFromBool(*win.EnableAutomaticUpdates)
 		}
 		if win.WinRM != nil && win.WinRM.Listeners != nil {
 			for _, rml := range win.WinRM.Listeners {
@@ -169,7 +163,7 @@ func (vm *VirtualMachine) loadOSProfile(os *armcompute.OSProfile) {
 				}
 				isHttps := BoolUnknown
 				if rml.Protocol != nil {
-					isHttps = unknownFromBool(*rml.Protocol == armcompute.ProtocolTypesHTTPS)
+					isHttps = UnknownFromBool(*rml.Protocol == armcompute.ProtocolTypesHTTPS)
 				}
 				vm.WindowsRMListeners = append(
 					vm.WindowsRMListeners,

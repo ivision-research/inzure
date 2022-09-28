@@ -1,5 +1,7 @@
 package inzure
 
+//go:generate go run gen/enum.go -type-name SecurityRuleProtocol -prefix Protocol -values All,TCP,UDP -azure-type SecurityRuleProtocol -azure-values SecurityRuleProtocolAsterisk,SecurityRuleProtocolTCP,SecurityRuleProtocolUDP -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork -no-string
+
 import (
 	"bytes"
 	"encoding/json"
@@ -8,22 +10,6 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
-)
-
-// SecurityRuleProtocol is a psuedo enum type for the different protocl options
-type SecurityRuleProtocol uint8
-
-const (
-	// ProtocolUnknown is for when we can't figure out the protocol. This
-	// should never happen, but it is the default value just in case.
-	ProtocolUnknown SecurityRuleProtocol = iota
-	// ProtocolAll is the "*" option in Azure. Rules tagged with this apply to
-	// all available protocols.
-	ProtocolAll
-	// ProtocolTCP is for TCP only
-	ProtocolTCP
-	// ProtocolUDP is for UDP only
-	ProtocolUDP
 )
 
 func (p SecurityRuleProtocol) String() string {
@@ -36,23 +22,6 @@ func (p SecurityRuleProtocol) String() string {
 		return "TCP/UDP"
 	default:
 		return "Unknown"
-	}
-}
-
-func (s *SecurityRuleProtocol) FromAzure(az *armnetwork.SecurityRuleProtocol) {
-	if az == nil {
-		*s = ProtocolUnknown
-		return
-	}
-	switch *az {
-	case armnetwork.SecurityRuleProtocolAsterisk:
-		*s = ProtocolAll
-	case armnetwork.SecurityRuleProtocolTCP:
-		*s = ProtocolTCP
-	case armnetwork.SecurityRuleProtocolUDP:
-		*s = ProtocolUDP
-	default:
-		*s = ProtocolUnknown
 	}
 }
 
@@ -348,10 +317,10 @@ func (v *VirtualNetwork) FromAzure(az *armnetwork.VirtualNetwork) {
 		}
 	*/
 	if props.EnableDdosProtection != nil {
-		v.DDoSProtectionEnabled = unknownFromBool(*props.EnableDdosProtection)
+		v.DDoSProtectionEnabled = UnknownFromBool(*props.EnableDdosProtection)
 	}
 	if props.EnableVMProtection != nil {
-		v.VMProtectionEnabled = unknownFromBool(*props.EnableVMProtection)
+		v.VMProtectionEnabled = UnknownFromBool(*props.EnableVMProtection)
 	}
 	if props.AddressSpace != nil && props.AddressSpace.AddressPrefixes != nil {
 		pres := props.AddressSpace.AddressPrefixes

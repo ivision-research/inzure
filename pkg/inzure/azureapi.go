@@ -1120,7 +1120,7 @@ func (impl *azureImpl) getSQLDatabaseEncrypted(ctx context.Context, client *arms
 				}
 				continue
 			}
-			enabled := unknownFromBool(*props.State == armsql.TransparentDataEncryptionStateEnabled)
+			enabled := UnknownFromBool(*props.State == armsql.TransparentDataEncryptionStateEnabled)
 			if !sendChan(ctx, enabled, out) {
 				return false, nil
 			}
@@ -2244,9 +2244,7 @@ func getTokenCredentials(opts *azcore.ClientOptions) (tokenCred azcore.TokenCred
 		return nil, err
 	}
 
-	return &cachedTokenCredential{
-		wrapped: chained,
-	}, nil
+	return newCachedTokenCredential(chained), nil
 }
 
 func getTokenCredentialsWithTenant(sources *[]azcore.TokenCredential, tenantId string, opts *azcore.ClientOptions) {
@@ -2287,7 +2285,7 @@ func getTokenCredentialsWithTenant(sources *[]azcore.TokenCredential, tenantId s
 //
 //		- AZURE_TENANT_ID - This always needs to be set.
 //
-// Then you can either login as the previously created application with:
+// Then you can either log in as the previously created application with:
 //
 //		- AZURE_CLIENT_ID - This is the Inzure Tool client ID setup before
 //		- AZURE_CLIENT_SECRET - This is the tool's secret
@@ -2352,14 +2350,6 @@ func debugDumpJSON(v interface{}) {
 	fmt.Fprintf(os.Stderr, "[DEBUG] - %s\n", string(b))
 }
 
-type getTokenState uint8
-
-const (
-	shouldGetToken getTokenState = iota
-	gettingToken
-	haveToken
-)
-
 type cachedTokenCredential struct {
 	wrapped azcore.TokenCredential
 
@@ -2386,7 +2376,7 @@ func newCachedTokenCredential(wrapped azcore.TokenCredential) azcore.TokenCreden
 }
 
 func (cached *cachedTokenCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	// Use a read lock here. If all is setup already, this will be a fairly quick
+	// Use a read lock here. If all is set up already, this will be a fairly quick
 	// path through this function.
 	cached.getTokenMutex.RLock()
 	if !cached.shouldGetToken() {

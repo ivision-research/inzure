@@ -101,7 +101,7 @@ func (s *Subscription) GetAttackSurface() AttackSurface {
 
 		for _, sa := range rg.StorageAccounts {
 			for _, c := range sa.Containers {
-				if c.Access >= ContainerAccessBlob {
+				if c.Access.IsBlob().True() || c.Access.IsContainer().True() {
 					as.PublicContainers = append(as.PublicContainers, c.URL)
 				}
 			}

@@ -10,47 +10,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 )
 
-// AppLanguage is an enum for available languages in the Azure app language
-// platform
-type AppLanguage uint8
-
-const (
-	// LanguageUnknown is for when we couldn't determine the Web app language
-	LanguageUnknown AppLanguage = iota
-	LanguageNode
-	LanguagePHP
-	LanguageJava
-	LanguageDotNet
-	LanguageRuby
-	LanguagePython
-	// LanguageDocker covers a larger array of things running in Docker
-	// containers on a Linux host
-	LanguageDocker
-	LanguagePowerShell
-)
-
-func (l AppLanguage) String() string {
-	switch l {
-	case LanguageNode:
-		return "Node"
-	case LanguagePHP:
-		return "PHP"
-	case LanguageJava:
-		return "Java"
-	case LanguageDotNet:
-		return ".Net"
-	case LanguageRuby:
-		return "Ruby"
-	case LanguagePython:
-		return "Python"
-	case LanguageDocker:
-		return "Docker"
-	case LanguagePowerShell:
-		return "PowerShell"
-	default:
-		return "Unknown"
-	}
-}
+//go:generate go run gen/enum.go -type-name AppLanguage -prefix Language -values Node,PHP,Java,DotNet,Ruby,Python,Docker,PowerShell
+//go:generate go run gen/enum.go -prefix FTPState -values Disabled,FTPSOnly,All -azure-type FtpsState -azure-values FtpsStateDisabled,FtpsStateFtpsOnly,FtpsStateAllAllowed -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice -no-string
+//go:generate go run gen/enum.go -prefix WebAppClientCertMode -values Required,Optional,OptionalInteractiveUser -azure-type ClientCertMode -azure-values ClientCertModeRequired,ClientCertModeOptional,ClientCertModeOptionalInteractiveUser -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice
 
 // WebAppLanguage defines the language and version the web application backend
 // is using.
@@ -275,20 +237,6 @@ func (f *Function) FromAzure(fe *armappservice.FunctionEnvelope) {
 
 }
 
-// FTPState represents the ftp setting on the web app
-type FTPState uint8
-
-const (
-	// FTPStateUnknown is an unknown state
-	FTPStateUnknown FTPState = iota
-	// FTPStateDisabled indicates that ftp/ftps are disabled
-	FTPStateDisabled
-	// FTPStateFTPSOnly is FTPS only
-	FTPStateFTPSOnly
-	// FTPStateAll indicates that both FTP/FTPS are enabled
-	FTPStateAll
-)
-
 func (f FTPState) String() string {
 	switch f {
 	case FTPStateAll:
@@ -468,33 +416,6 @@ func (m *WebAppHandlerMapping) FromAzure(az *armappservice.HandlerMapping) {
 	gValFromPtr(&m.ScriptProcessor, az.ScriptProcessor)
 }
 
-type WebAppClientCertMode uint8
-
-const (
-	WebAppClientCertModeUnknown WebAppClientCertMode = iota
-	WebAppClientCertModeRequired
-	WebAppClientCertModeOptional
-	WebAppClientCertModeOptionalInteractiveUser
-)
-
-func (cm *WebAppClientCertMode) FromAzure(az *armappservice.ClientCertMode) {
-	if az == nil {
-		*cm = WebAppClientCertModeUnknown
-		return
-	}
-	switch *az {
-	case armappservice.ClientCertModeOptional:
-		*cm = WebAppClientCertModeOptional
-	case armappservice.ClientCertModeRequired:
-		*cm = WebAppClientCertModeRequired
-	case armappservice.ClientCertModeOptionalInteractiveUser:
-		*cm = WebAppClientCertModeOptionalInteractiveUser
-	default:
-		*cm = WebAppClientCertModeUnknown
-	}
-
-}
-
 // WebApp holds all of the required information for an Azure mananged web app.
 type WebApp struct {
 	Meta                     ResourceID
@@ -605,20 +526,9 @@ func (w *WebApp) fillConfigInfo(conf *armappservice.SiteConfig) {
 	w.UsesLocalSQL.FromBoolPtr(conf.LocalMySQLEnabled)
 	gValFromPtr(&w.DocumentRoot, conf.DocumentRoot)
 	gValFromPtr(&w.CommandLine, conf.AppCommandLine)
-	if conf.FtpsState != nil {
-		switch *conf.FtpsState {
-		case armappservice.FtpsStateAllAllowed:
-			w.FTPState = FTPStateAll
-		case armappservice.FtpsStateFtpsOnly:
-			w.FTPState = FTPStateFTPSOnly
-		case armappservice.FtpsStateDisabled:
-			w.FTPState = FTPStateDisabled
-		default:
-			w.FTPState = FTPStateUnknown
-		}
-	} else {
-		w.FTPState = FTPStateUnknown
-	}
+
+	w.FTPState.FromAzure(conf.FtpsState)
+
 	if conf.MinTLSVersion != nil && w.MinTLSVersion == TLSVersionUnknown {
 		w.MinTLSVersion.FromAzureWeb(*conf.MinTLSVersion)
 	}
@@ -688,7 +598,7 @@ func (w *WebApp) FromAzure(aw *armappservice.Site) {
 				for _, state := range props.HostNameSSLStates {
 					if state.Name != nil && *state.Name == host.Name {
 						if state.SSLState != nil {
-							host.SSLEnabled = unknownFromBool(*state.SSLState == armappservice.SSLStateDisabled)
+							host.SSLEnabled = UnknownFromBool(*state.SSLState == armappservice.SSLStateDisabled)
 						} else {
 							host.SSLEnabled = BoolUnknown
 						}

@@ -7,32 +7,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement"
 )
 
-type APIServiceVNetType uint8
-
-const (
-	APIServiceVNetTypeUnknown APIServiceVNetType = iota
-	APIServiceVNetTypeExternal
-	APIServiceVNetTypeInternal
-	APIServiceVNetTypeNone
-)
-
-func (ty *APIServiceVNetType) FromAzure(az *armapimanagement.VirtualNetworkType) {
-	if az == nil {
-		// Defaults to None
-		*ty = APIServiceVNetTypeNone
-		return
-	}
-	switch *az {
-	case armapimanagement.VirtualNetworkTypeExternal:
-		*ty = APIServiceVNetTypeExternal
-	case armapimanagement.VirtualNetworkTypeInternal:
-		*ty = APIServiceVNetTypeInternal
-	case armapimanagement.VirtualNetworkTypeNone:
-		*ty = APIServiceVNetTypeNone
-	default:
-		*ty = APIServiceVNetTypeNone
-	}
-}
+//go:generate go run gen/enum.go -prefix APIServiceVNetType -values None,External,Internal -azure-type VirtualNetworkType -azure-values VirtualNetworkTypeNone,VirtualNetworkTypeExternal,VirtualNetworkTypeInternal -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement -no-unknown
+//go:generate go run gen/enum.go -type-name APIUserActivationState -prefix APIUserState -values Active,Pending,Blocked,Deleted -azure-type UserState -azure-values UserStateActive,UserStatePending,UserStateBlocked,UserStateDeleted -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement
 
 type APIService struct {
 	Meta               ResourceID
@@ -420,35 +396,6 @@ func (a *API) FromAzure(az *armapimanagement.APIContract) {
 	}
 	// TODO: OAuth2 settings?
 	a.Online.FromBoolPtr(props.IsOnline)
-}
-
-type APIUserActivationState uint8
-
-const (
-	APIUserStateUnknown APIUserActivationState = iota
-	APIUserStateActive
-	APIUserStatePending
-	APIUserStateBlocked
-	APIUserStateDeleted
-)
-
-func (a *APIUserActivationState) FromAzure(az *armapimanagement.UserState) {
-	if az == nil {
-		*a = APIUserStateUnknown
-		return
-	}
-	switch *az {
-	case armapimanagement.UserStateActive:
-		*a = APIUserStateActive
-	case armapimanagement.UserStateBlocked:
-		*a = APIUserStateBlocked
-	case armapimanagement.UserStateDeleted:
-		*a = APIUserStateDeleted
-	case armapimanagement.UserStatePending:
-		*a = APIUserStatePending
-	default:
-		*a = APIUserStateUnknown
-	}
 }
 
 type APIServiceUser struct {
