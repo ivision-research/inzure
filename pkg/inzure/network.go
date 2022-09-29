@@ -462,108 +462,169 @@ func (nsg *NetworkSecurityGroup) AllowsIPToPortString(ip, port string) (UnknownB
 	return FirewallAllowsIPToPortFromString(nsg, ip, port)
 }
 
+func (nsg *NetworkSecurityGroup) AllowsToPortString(port string) (UnknownBool, []PacketRoute, error) {
+	checkPort := NewPortFromAzure(port)
+	return nsg.AllowsToPort(checkPort)
+}
+
+func (nsg *NetworkSecurityGroup) AllowsToPort(checkPort AzurePort) (UnknownBool, []PacketRoute, error) {
+	allowedDestinations := make([]PacketRoute, 0)
+	deniedSources := make([]AzureIPv4, 0)
+	hadUncertainty := false
+
+	sort.Sort(SecurityRules(nsg.InboundRules))
+
+	for _, rule := range nsg.InboundRules {
+		if !rule.Inbound {
+			continue
+		}
+		for _, port := range rule.DestPorts {
+			contains := PortContains(checkPort, port)
+			if !contains {
+				continue
+			}
+			if rule.Allows {
+				ruleAllows := make([]AzureIPv4, 0, len(rule.SourceIPs))
+				for _, ip := range rule.SourceIPs {
+					if len(deniedSources) > 0 {
+						for _, denied := range deniedSources {
+							contains := IPContains(denied, ip)
+							if contains.False() {
+								ruleAllows = append(ruleAllows, ip)
+								break
+							} else if contains.Unknown() {
+								hadUncertainty = true
+							}
+						}
+					} else {
+						ruleAllows = append(ruleAllows, ip)
+					}
+				}
+				if len(ruleAllows) > 0 {
+					allowedDestinations = append(allowedDestinations, PacketRoute{
+						IPs:      ruleAllows,
+						Ports:    []AzurePort{checkPort},
+						Protocol: rule.Protocol,
+					})
+				}
+			} else {
+				// Since the rules are sorted, we can just keep appending to this
+				// list and checking it in subsequent allow rules
+				for _, ip := range rule.SourceIPs {
+					deniedSources = append(deniedSources, ip)
+				}
+			}
+		}
+	}
+	if len(allowedDestinations) == 0 {
+		if hadUncertainty {
+			return BoolUnknown, nil, nil
+		}
+		return BoolFalse, nil, nil
+	}
+	if hadUncertainty {
+		return BoolUnknown, allowedDestinations, nil
+	}
+	return BoolTrue, allowedDestinations, nil
+}
+
 func (nsg *NetworkSecurityGroup) AllowsIPString(ip string) (UnknownBool, []PacketRoute, error) {
 	return FirewallAllowsIPFromString(nsg, ip)
 }
 
-// AllowsIPToPort is implementing Firewall for NetworkSecurityGroup
 func (nsg *NetworkSecurityGroup) AllowsIPToPort(checkIP AzureIPv4, checkPort AzurePort) (UnknownBool, []PacketRoute, error) {
-	// Setting these to the highest possible int32 value. The lower the value
-	// of a priority the higher priority it is, so these are the lowest
-	// priority. I think Azure doesn't let the value actually go this high.
-	allowPrecedent := int32((^uint32(0)) >> 1)
-	denyPrecedent := int32((^uint32(0)) >> 1)
-	unknownPrecedent := int32((^uint32(0)) >> 1)
-	allowedDestinations := make([]PacketRoute, 0)
-	// So we're going to loop through every inbound rule. If there is ever
-	// an inbound rule that denies with higher priority than allows we
-	// return false immediately.
-	//
-	// Note that this loop is not assuming that the rules are sorted.
+
+	var allowedDestinations []PacketRoute = nil
+
+	sort.Sort(SecurityRules(nsg.InboundRules))
+
 	for _, rule := range nsg.InboundRules {
 		if !rule.Inbound {
 			continue
 		}
-	IPLoop:
+		ruleContainsPort := false
+		for _, port := range rule.DestPorts {
+			if PortContains(port, checkPort) {
+				ruleContainsPort = true
+				break
+			}
+		}
+		if !ruleContainsPort {
+			continue
+		}
 		for _, ip := range rule.SourceIPs {
 			contains := IPContains(ip, checkIP)
-			// If it is unknown, we'll take the priority of that rule to check
-			// later. It shoudn't be an immediate exit. If it has the highest
-			// precedence (lowest number priority) at the end then we have to
-			// admit uncertainty.
 			if contains.Unknown() {
-				unknownPrecedent = rule.Priority
-			} else if contains.True() {
-				for _, port := range rule.DestPorts {
-					if PortContains(port, checkPort) {
-						if rule.Allows {
-							if rule.Priority < denyPrecedent {
-								allowPrecedent = rule.Priority
-								allowedDestinations = append(
-									allowedDestinations,
-									PacketRouteFromSecurityRuleDests(rule),
-								)
-								break IPLoop
-							}
-						} else {
-							if rule.Priority < allowPrecedent {
-								denyPrecedent = rule.Priority
-								break IPLoop
-							}
-						}
+				if !rule.Allows {
+					return BoolUnknown, nil, nil
+				}
+				if allowedDestinations == nil {
+					allowedDestinations = []PacketRoute{
+						PacketRouteFromSecurityRuleDests(rule),
 					}
+				} else {
+					allowedDestinations = append(allowedDestinations, PacketRouteFromSecurityRuleDests(rule))
+				}
+			} else if contains.True() {
+				if rule.Allows {
+					allowedDestinations = []PacketRoute{
+						PacketRouteFromSecurityRuleDests(rule),
+					}
+					return BoolTrue, allowedDestinations, nil
+				} else {
+					// This means we had some uncertain allows, let them know
+					if allowedDestinations != nil && len(allowedDestinations) > 0 {
+						break
+					}
+					return BoolFalse, nil, nil
 				}
 			}
 		}
 	}
-	if unknownPrecedent <= denyPrecedent && unknownPrecedent <= allowPrecedent {
-		return BoolUnknown, nil, nil
-	} else if denyPrecedent <= allowPrecedent {
-		return BoolFalse, nil, nil
-	}
-	return BoolTrue, allowedDestinations, nil
+	return BoolUnknown, allowedDestinations, nil
 }
 
 // AllowsIP is implementing Firewall for NetworkSecurityGroup
 func (nsg *NetworkSecurityGroup) AllowsIP(checkIP AzureIPv4) (UnknownBool, []PacketRoute, error) {
-	unknownPrecedent := int32((^uint32(0)) >> 1)
-	allowPrecedent := int32((^uint32(0)) >> 1)
-	denyPrecedent := int32((^uint32(0)) >> 1)
-	allowedDestinations := make([]PacketRoute, 0)
+
+	var allowedDestinations []PacketRoute = nil
+
+	sort.Sort(SecurityRules(nsg.InboundRules))
+
 	for _, rule := range nsg.InboundRules {
 		if !rule.Inbound {
 			continue
 		}
-	IPLoop:
 		for _, ip := range rule.SourceIPs {
 			contains := IPContains(ip, checkIP)
 			if contains.Unknown() {
-				unknownPrecedent = rule.Priority
-			} else if contains.True() {
-				if rule.Allows {
-					if rule.Priority < denyPrecedent {
-						allowPrecedent = rule.Priority
-						allowedDestinations = append(
-							allowedDestinations,
-							PacketRouteFromSecurityRuleDests(rule),
-						)
-						break IPLoop
+				if !rule.Allows {
+					return BoolUnknown, nil, nil
+				}
+				if allowedDestinations == nil {
+					allowedDestinations = []PacketRoute{
+						PacketRouteFromSecurityRuleDests(rule),
 					}
 				} else {
-					if rule.Priority < allowPrecedent {
-						denyPrecedent = rule.Priority
-						break IPLoop
+					allowedDestinations = append(allowedDestinations, PacketRouteFromSecurityRuleDests(rule))
+				}
+			} else if contains.True() {
+				if rule.Allows {
+					allowedDestinations = []PacketRoute{
+						PacketRouteFromSecurityRuleDests(rule),
 					}
+					return BoolTrue, allowedDestinations, nil
+				} else {
+					// This means we had some uncertain allows, let them know
+					if allowedDestinations != nil && len(allowedDestinations) > 0 {
+						break
+					}
+					return BoolFalse, nil, nil
 				}
 			}
 		}
 	}
-	if unknownPrecedent <= denyPrecedent && unknownPrecedent <= allowPrecedent {
-		return BoolUnknown, nil, nil
-	} else if denyPrecedent <= allowPrecedent {
-		return BoolFalse, nil, nil
-	}
-	return BoolTrue, allowedDestinations, nil
+	return BoolUnknown, allowedDestinations, nil
 }
 
 // RespectsAllowlist for a NetworkSecurityGroup is NOT port agnostic. This

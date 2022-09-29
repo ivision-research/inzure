@@ -19,14 +19,16 @@ var (
 type Firewall interface {
 	// AllowsIP checks if the given IP is allowed through the firewall for any
 	// potential source. If BoolTrue is returned, the PacketRoute slice gives
-	// all of the known firewall protected targets that this IP is allowed to
-	// access. If that can't be determined, it should be a single */* for
-	// caution's sake.
+	// all the known firewall protected targets that this IP is allowed to
+	// access. If BoolUnknown is returned, the returned slice should contain
+	// potentially reachable locations.
 	AllowsIP(AzureIPv4) (UnknownBool, []PacketRoute, error)
 	AllowsIPString(string) (UnknownBool, []PacketRoute, error)
 	// AllowsIPToPort checks if an IP can access the given port on any server
 	// protected by the firewall. If BoolTrue is returned, the PacketRoute
-	// slice gives IPs that can be reached at that port.
+	// slice gives IPs that can be reached at that port. If BoolUnknown is
+	// returned, the returned slice should contain potentially reachable
+	// locations.
 	AllowsIPToPort(AzureIPv4, AzurePort) (UnknownBool, []PacketRoute, error)
 	AllowsIPToPortString(string, string) (UnknownBool, []PacketRoute, error)
 	// RespectsAllowlist checks if the firewall respects a given allowlist.
