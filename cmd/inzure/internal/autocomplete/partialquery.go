@@ -198,7 +198,7 @@ func (p *partialQueryString) rgFieldConditionalAutoComplete() Completions {
 		p.Field = ""
 		p.Condition = ""
 		p.Parts = 1
-		return p.rgFieldAutoComplete()
+		return p.rgFieldOnlyAutocomplete()
 	}
 	if len(sp) == 0 {
 		return append(comps, compsFromStructFields(t, base)...)
@@ -334,10 +334,7 @@ func (p *partialQueryString) rgAutoComplete(args []string) Completions {
 	return comps
 }
 
-func (p *partialQueryString) rgFieldAutoComplete() Completions {
-	if strings.Contains(p.Original, "[") {
-		return p.rgFieldConditionalAutoComplete()
-	}
+func (p *partialQueryString) rgFieldOnlyAutocomplete() Completions {
 	var rg inzure.ResourceGroup
 	t := reflect.TypeOf(rg)
 	nf := t.NumField()
@@ -360,4 +357,19 @@ func (p *partialQueryString) rgFieldAutoComplete() Completions {
 		return potentials
 	}
 	return comps
+}
+
+func (p *partialQueryString) rgFieldAutoComplete() Completions {
+	if strings.Contains(p.Original, "[") {
+		return p.rgFieldConditionalAutoComplete()
+	}
+	return p.rgFieldOnlyAutocomplete()
+}
+
+func (p *partialQueryString) subResourceConditionalAutocomplete() Completions {
+	return nil
+}
+
+func (p *partialQueryString) subResourceAutocomplete() Completions {
+	return nil
 }
