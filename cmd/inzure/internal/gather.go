@@ -184,7 +184,7 @@ func CmdGather(c *cli.Context) {
 		}
 	}
 
-	pw := getEncryptPassword(c)
+	pw := maybeGetEncryptionPassword(c, false)
 
 	if OutputFile == "" && len(GatherSubscriptions) == 1 {
 		envFile := os.Getenv(inzure.EnvSubscriptionJSON)

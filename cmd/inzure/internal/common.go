@@ -108,6 +108,10 @@ func exitError(code int, fm string, params ...interface{}) {
 }
 
 func getEncryptPassword(ctx *cli.Context) []byte {
+	return maybeGetEncryptionPassword(ctx, true)
+}
+
+func maybeGetEncryptionPassword(ctx *cli.Context, required bool) []byte {
 
 	cmdLineValue := ctx.GlobalString("password")
 	if cmdLineValue != "" {
@@ -119,11 +123,14 @@ func getEncryptPassword(ctx *cli.Context) []byte {
 		return []byte(fromEnv)
 	}
 
-	if err := DoSetPassword(ctx); err != nil {
-		exitError(1, err.Error())
-	}
+	if required {
+		if err := DoSetPassword(ctx); err != nil {
+			exitError(1, err.Error())
+		}
 
-	return []byte(ctx.GlobalString("password"))
+		return []byte(ctx.GlobalString("password"))
+	}
+	return nil
 }
 
 func DoSetPassword(ctx *cli.Context) error {
