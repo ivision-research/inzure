@@ -13,7 +13,7 @@ import (
 var (
 	SearchIQS         string
 	SubscriptionFiles cli.StringSlice
-	NoLegacy          bool = false
+	NoLegacy          = false
 )
 
 var CmdSearchFlags = []cli.Flag{
@@ -29,15 +29,27 @@ var CmdSearchFlags = []cli.Flag{
 		Destination: &NoLegacy,
 	},
 	OutputFileFlag,
+	BatchFlag,
 }
 
-func CmdSearch(c *cli.Context) {
-	args := c.Args()
+func CmdSearch(ctx *cli.Context) {
+	args := ctx.Args()
 	if len(args) == 0 {
 		exitError(1, "need to pass a search string")
 	}
 
+	if Batch {
+		files, err := inzure.BatchFilesFromEnv()
+		if err != nil {
+			exitError(1, "failed to get batch files: %v", err)
+		}
+		SubscriptionFiles = append(SubscriptionFiles, files...)
+	}
+
 	if SubscriptionFiles == nil || len(SubscriptionFiles) == 0 {
+		if Batch {
+			exitError(1, "batch file %s doesn't contain any subscription files", inzure.EnvSubscriptionBatchFiles)
+		}
 		exitError(1, "need to specify an input inzure JSON with -f")
 	}
 
@@ -45,14 +57,14 @@ func CmdSearch(c *cli.Context) {
 	subscriptionFiles := SubscriptionFiles
 
 	if !NoLegacy && len(subscriptionFiles) == 1 {
-		cmdSearchSingleFile(subscriptionFiles[0])
+		cmdSearchSingleFile(ctx, subscriptionFiles[0])
 		return
 	}
 	results := make(map[string]*json.RawMessage)
 	var buf bytes.Buffer
 	for _, subFile := range subscriptionFiles {
 		buf.Reset()
-		subID := doSearch(subFile, &buf)
+		subID := doSearch(ctx, subFile, &buf)
 		into := new(json.RawMessage)
 		err := json.Unmarshal(buf.Bytes(), into)
 		if err != nil {
@@ -71,14 +83,11 @@ func CmdSearch(c *cli.Context) {
 	}
 }
 
-func doSearch(inputFile string, out io.Writer) string {
+func doSearch(ctx *cli.Context, inputFile string, out io.Writer) string {
 	if out == nil {
 		out = os.Stdout
 	}
-	sub, err := inzure.SubscriptionFromFile(inputFile)
-	if err != nil {
-		exitError(1, err.Error())
-	}
+	sub := getSubscriptionForFile(ctx, inputFile, nil)
 
 	v, err := sub.ReflectFromQueryString(SearchIQS)
 	if err != nil {
@@ -109,10 +118,10 @@ func getOutputFile() io.Writer {
 	return out
 }
 
-func cmdSearchSingleFile(inputFile string) {
+func cmdSearchSingleFile(ctx *cli.Context, inputFile string) {
 	out := getOutputFile()
 	if f, is := out.(*os.File); is {
 		defer f.Close()
 	}
-	doSearch(inputFile, out)
+	doSearch(ctx, inputFile, out)
 }

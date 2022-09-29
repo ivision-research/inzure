@@ -387,16 +387,18 @@ func getCmdCompleters(args []string) (map[string]CompleteFunc, []string) {
 	return m, args
 }
 
-func customFlagAutoCompletions(pArgs []string, flag string, cur string) {
+func customFlagAutoCompletions(pArgs []string, flag string, cur string) bool {
 	m, args := getCmdCompleters(pArgs)
 	if m == nil {
-		return
+		return true
 	}
+	// If there is no completer for the flag assume it is just a bool flag
 	flagComplete, has := m[strings.TrimLeft(flag, "-")]
 	if !has || flagComplete == nil {
-		return
+		return false
 	}
 	flagComplete(cur, args).Print()
+	return true
 }
 
 func autoCompletePositional(pArgs []string, cur string) {
@@ -454,8 +456,9 @@ func DoAutoComplete(allCmds []cli.Command, gf []cli.Flag) {
 	}
 
 	if isFlag(sp[nargs-1]) {
-		customFlagAutoCompletions(args, sp[nargs-1], cur)
-		return
+		if customFlagAutoCompletions(args, sp[nargs-1], cur) {
+			return
+		}
 	}
 
 	if newArg {

@@ -1,34 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"os"
 
 	"github.com/CarveSystems/inzure/cmd/inzure/internal"
 	"github.com/CarveSystems/inzure/cmd/inzure/internal/autocomplete"
-	"github.com/chzyer/readline"
 	"github.com/urfave/cli"
 )
 
 func setPassword(ctx *cli.Context) error {
 	if ctx.GlobalBool("p") {
-		rl, err := readline.New("")
-		if err != nil {
-			return err
-		}
-		pass1, err := rl.ReadPassword("Encryption password: ")
-		if err != nil {
-			return err
-		}
-		pass2, err := rl.ReadPassword("Confirm: ")
-		if err != nil {
-			return err
-		}
-		if bytes.Compare(pass1, pass2) != 0 {
-			return errors.New("passwords don't match")
-		}
-		ctx.GlobalSet("password", string(pass1))
+		return internal.DoSetPassword(ctx)
 	}
 	return nil
 }
@@ -53,7 +35,7 @@ func main() {
 	app.Commands = Commands
 	app.CommandNotFound = CommandNotFound
 
-	app.Before = cli.BeforeFunc(setPassword)
+	app.Before = setPassword
 
 	app.Run(os.Args)
 }

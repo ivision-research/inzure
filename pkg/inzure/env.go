@@ -26,7 +26,7 @@ var (
 	EnvSubscriptionBatchFiles = "INZURE_SUBSCRIPTION_BATCH_FILES"
 )
 
-func getBatchFileNames() ([]string, error) {
+func BatchFilesFromEnv() ([]string, error) {
 	fname := os.Getenv(EnvSubscriptionBatchFiles)
 	if fname == "" {
 		return nil, fmt.Errorf(
@@ -85,7 +85,7 @@ func SubscriptionIDsFromEnv() ([]SubscriptionID, error) {
 // password can be null if the files are unencrypted or the password can be
 // pulled from the environment.
 func BatchSubscriptionsFromEnv(pw []byte) ([]*Subscription, error) {
-	names, err := getBatchFileNames()
+	names, err := BatchFilesFromEnv()
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func BatchSubscriptionsFromEnvChan(
 	go func() {
 		defer close(c)
 		done := ctx.Done()
-		names, err := getBatchFileNames()
+		names, err := BatchFilesFromEnv()
 		if err != nil {
 			select {
 			case ec <- err:

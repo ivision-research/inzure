@@ -35,8 +35,7 @@ var (
 	ExcludeGatherTargets   string
 	GatherReportDir        string
 	GatherVerbose          = false
-	//GatherNoListKeys       = false
-	GatherSocks5Proxy GatherSocks5PoxyInfo
+	GatherSocks5Proxy      GatherSocks5PoxyInfo
 )
 
 var CmdGatherFlags = []cli.Flag{
@@ -61,11 +60,6 @@ var CmdGatherFlags = []cli.Flag{
 		Usage:       "A comma separated list of targets to exclude. This can't be set at the same time as \"targets\".",
 		Destination: &ExcludeGatherTargets,
 	},
-	//cli.BoolFlag{
-	//	Name:        "no-storage-keys",
-	//	Usage:       "Don't try to use storage account keys. This will also disable container searching.",
-	//	Destination: &GatherNoListKeys,
-	//},
 	cli.BoolFlag{
 		Name:        "v",
 		Usage:       "Verbose output",
@@ -211,7 +205,6 @@ func CmdGather(c *cli.Context) {
 			if pxy != nil {
 				sub.SetProxy(pxy)
 			}
-			//sub.HasListKeysPermission(!GatherNoListKeys)
 			sub.SetQuiet(!GatherVerbose)
 			if GatherTargets != "" {
 				if ExcludeGatherTargets != "" {
