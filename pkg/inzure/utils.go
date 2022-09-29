@@ -34,6 +34,14 @@ func gSliceFromPtrSetter[Az any, T any](into *[]T, from *[]Az, set func(*T, *Az)
 	*into = newSlice
 }
 
+func gValFromPtrDefault[T any](into *T, from *T, def T) {
+	if from == nil {
+		*into = def
+		return
+	}
+	*into = *from
+}
+
 func gValFromPtr[T any](into *T, from *T) {
 	if from == nil {
 		return

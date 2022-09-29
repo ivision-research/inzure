@@ -2,28 +2,32 @@
 
 package inzure
 
+
 import (
 	"fmt"
 	azpkg "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
 
+
 type StorageAccountKind int
 
 const (
-	StorageAccountKindUnknown          StorageAccountKind = 0
-	StorageAccountKindBlobStorage      StorageAccountKind = 1
-	StorageAccountKindBlockBlobStorage StorageAccountKind = 2
-	StorageAccountKindFileStorage      StorageAccountKind = 3
-	StorageAccountKindStorage          StorageAccountKind = 4
-	StorageAccountKindStorageV2        StorageAccountKind = 5
+	StorageAccountKindUnknown StorageAccountKind = 0
+    StorageAccountKindBlobStorage StorageAccountKind = 1
+    StorageAccountKindBlockBlobStorage StorageAccountKind = 2
+    StorageAccountKindFileStorage StorageAccountKind = 3
+    StorageAccountKindStorage StorageAccountKind = 4
+    StorageAccountKindStorageV2 StorageAccountKind = 5
 )
 
+
+
 func (it *StorageAccountKind) FromAzure(az *azpkg.Kind) {
-	if az == nil {
+	if (az == nil) {
 		*it = StorageAccountKindUnknown
 		return
 	}
-	switch *az {
+	switch(*az) {
 	case azpkg.KindBlobStorage:
 		*it = StorageAccountKindBlobStorage
 	case azpkg.KindBlockBlobStorage:
@@ -81,8 +85,9 @@ func (it StorageAccountKind) IsStorageV2() UnknownBool {
 	return UnknownFromBool(it == StorageAccountKindStorageV2)
 }
 
+
 func (it StorageAccountKind) String() string {
-	switch it {
+	switch (it) {
 	case StorageAccountKindBlobStorage:
 		return "BlobStorage"
 	case StorageAccountKindBlockBlobStorage:
@@ -97,3 +102,4 @@ func (it StorageAccountKind) String() string {
 		return fmt.Sprintf("StorageAccountKind(%d)", it)
 	}
 }
+

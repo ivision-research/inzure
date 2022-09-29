@@ -1,13 +1,18 @@
 package inzure
 
+import (
+	"fmt"
+	"os"
+)
+
 //go:generate go run gen/enum.go -prefix ContainerPermission -values Private,Blob,Container -azure-type PublicAccess -azure-values PublicAccessNone,PublicAccessBlob,PublicAccessContainer -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 //go:generate go run gen/enum.go -prefix StorageKeySource -values Storage,KeyVault -azure-type KeySource -azure-values KeySourceMicrosoftStorage,KeySourceMicrosoftKeyvault -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 //go:generate go run gen/enum.go -prefix FileShareProtocol -values NFS,SMB -azure-type EnabledProtocols -azure-values EnabledProtocolsNFS,EnabledProtocolsSMB -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 //go:generate go run gen/enum.go -prefix StorageAccountKind -values BlobStorage,BlockBlobStorage,FileStorage,Storage,StorageV2 -azure-type Kind -azure-values KindBlobStorage,KindBlockBlobStorage,KindFileStorage,KindStorage,KindStorageV2 -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+//go:generate go run gen/enum.go -prefix DefaultSharePermissions -values None,Contributor,ElevatedContributor,Reader -azure-type DefaultSharePermission -azure-values DefaultSharePermissionNone,DefaultSharePermissionStorageFileDataSmbShareContributor,DefaultSharePermissionStorageFileDataSmbShareElevatedContributor,DefaultSharePermissionStorageFileDataSmbShareReader -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
+//go:generate go run gen/enum.go -prefix DirectoryServiceOptions -values AADDS,AADKERB,AD,None -azure-type DirectoryServiceOptions -azure-values DirectoryServiceOptionsAADDS,DirectoryServiceOptionsAADKERB,DirectoryServiceOptionsAD,DirectoryServiceOptionsNone -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage
 
 import (
-	"fmt"
-	"os"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
@@ -76,6 +81,42 @@ func (se *StorageEncryption) FromAzure(enc *armstorage.Encryption) {
 	se.KeySource.FromAzure(enc.KeySource)
 }
 
+type ADProperties struct {
+	DomainName        string
+	AzureStorageSid   string
+	DomainSid         string
+	ForestName        string
+	NetBiosDomainName string
+	SamAccountName    string
+}
+
+func (adp *ADProperties) FromAzure(az *armstorage.ActiveDirectoryProperties) {
+	if az == nil {
+		return
+	}
+	gValFromPtr(&adp.DomainName, az.DomainName)
+	gValFromPtr(&adp.AzureStorageSid, az.AzureStorageSid)
+	gValFromPtr(&adp.DomainSid, az.DomainSid)
+	gValFromPtr(&adp.ForestName, az.ForestName)
+	gValFromPtr(&adp.NetBiosDomainName, az.NetBiosDomainName)
+	gValFromPtr(&adp.SamAccountName, az.SamAccountName)
+}
+
+type FilesIdentitySettings struct {
+	DirectoryServiceOptions DirectoryServiceOptions
+	DefaultPermissions      DefaultSharePermissions
+	ADProperties            ADProperties
+}
+
+func (fis *FilesIdentitySettings) FromAzure(az *armstorage.AzureFilesIdentityBasedAuthentication) {
+	if az == nil {
+		return
+	}
+	fis.DefaultPermissions.FromAzure(az.DefaultSharePermission)
+	fis.DirectoryServiceOptions.FromAzure(az.DirectoryServiceOptions)
+	fis.ADProperties.FromAzure(az.ActiveDirectoryProperties)
+}
+
 // StorageAccount contains the Container, Queue, and File types associated
 // with the given account.
 //
@@ -91,8 +132,13 @@ type StorageAccount struct {
 	HTTPSOnly     UnknownBool
 	MinTLSVersion TLSVersion
 
+	PublicNetworkAccessEnabled bool
+	DefaultToOAuth             bool
+
 	Containers []Container
 	FileShares []FileShare
+
+	FilesIdentitySettings FilesIdentitySettings
 
 	key string
 }
@@ -194,6 +240,12 @@ func (sa *StorageAccount) FromAzure(acc *armstorage.Account) {
 	}
 	sa.Kind.FromAzure(acc.Kind)
 	if acc.Properties != nil {
+		if acc.Properties.PublicNetworkAccess != nil {
+			sa.PublicNetworkAccessEnabled = *acc.Properties.PublicNetworkAccess == armstorage.PublicNetworkAccessEnabled
+		} else {
+			sa.PublicNetworkAccessEnabled = true
+		}
+		gValFromPtrDefault(&sa.DefaultToOAuth, acc.Properties.DefaultToOAuthAuthentication, false)
 		sa.MinTLSVersion.FromAzureStorage(acc.Properties.MinimumTLSVersion)
 		sa.Encryption.FromAzure(acc.Properties.Encryption)
 		sa.HTTPSOnly.FromBoolPtr(acc.Properties.EnableHTTPSTrafficOnly)
@@ -201,6 +253,7 @@ func (sa *StorageAccount) FromAzure(acc *armstorage.Account) {
 		if cd != nil {
 			gValFromPtr(&sa.CustomDomain, cd.Name)
 		}
+		sa.FilesIdentitySettings.FromAzure(acc.Properties.AzureFilesIdentityBasedAuthentication)
 	}
 	sa.Containers = make([]Container, 0)
 }
