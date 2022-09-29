@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"reflect"
 
 	"github.com/CarveSystems/inzure/pkg/inzure"
 	"github.com/urfave/cli"
@@ -97,7 +98,13 @@ func doSearch(ctx *cli.Context, inputFile string, out io.Writer) string {
 		}
 		exitError(1, err.Error())
 	}
-	err = json.NewEncoder(out).Encode(v.Interface())
+
+	if v.Kind() == reflect.Ptr && (v.IsNil() || v.Elem().IsNil()) {
+		_, err = out.Write([]byte("[]\n"))
+	} else {
+		err = json.NewEncoder(out).Encode(v.Interface())
+
+	}
 	if err != nil {
 		exitError(1, err.Error())
 	}
