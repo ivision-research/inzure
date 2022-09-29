@@ -207,16 +207,14 @@ func (p *partialQueryString) rgFieldConditionalAutoComplete() Completions {
 		// Set the t from the sf we got before. Note that this starts
 		// at the resource group
 		t = typeToBase(sf.Type)
-		// Stop any sort of panic here
 		if t.Kind() != reflect.Struct {
-			c := Completion{
-				Completion: base,
-			}
-			potentials = append(potentials, c)
+			//c := Completion{
+			//	Completion: base,
+			//}
 			if strings.HasPrefix(sf.Name, f) {
-				return append(comps, c)
+				return append(comps, getMethodCompletionsPrefix(t, base, f)...)
 			} else {
-				return append(potentials, c)
+				return append(potentials, getMethodCompletionsPrefix(t, base, f)...)
 			}
 		}
 		var extra string
@@ -364,12 +362,4 @@ func (p *partialQueryString) rgFieldAutoComplete() Completions {
 		return p.rgFieldConditionalAutoComplete()
 	}
 	return p.rgFieldOnlyAutocomplete()
-}
-
-func (p *partialQueryString) subResourceConditionalAutocomplete() Completions {
-	return nil
-}
-
-func (p *partialQueryString) subResourceAutocomplete() Completions {
-	return nil
 }

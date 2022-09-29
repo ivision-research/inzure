@@ -69,7 +69,7 @@ func typeToBase(t reflect.Type) reflect.Type {
 func compsFromStructFields(t reflect.Type, base string) Completions {
 	c := make(Completions, 0, 5)
 	if t.Kind() != reflect.Struct {
-		return c
+		return append(c, getMethodCompletions(t, base)...)
 	}
 	nf := t.NumField()
 	for i := 0; i < nf; i++ {
@@ -139,7 +139,7 @@ func getMethodCompletionsPrefix(t reflect.Type, base, pref string) Completions {
 func compsFromStructFieldsPrefix(t reflect.Type, base, pref string) Completions {
 	c := make(Completions, 0, 5)
 	if t.Kind() != reflect.Struct {
-		return c
+		return append(c, getMethodCompletionsPrefix(t, base, pref)...)
 	}
 	nf := t.NumField()
 	potentials := make(Completions, 0, nf)
