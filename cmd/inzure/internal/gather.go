@@ -15,7 +15,7 @@ import (
 	"syscall"
 
 	"github.com/Azure/go-autorest/autorest"
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 	"github.com/urfave/cli"
 	"golang.org/x/net/proxy"
 	"golang.org/x/term"

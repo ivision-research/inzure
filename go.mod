@@ -1,3 +1,3 @@
-module github.com/CarveSystems/inzure
+module github.com/ivision-research/inzure
 
-go 1.12
+go 1.18

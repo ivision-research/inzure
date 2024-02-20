@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/CarveSystems/inzure/cmd/inzure/internal"
-	"github.com/CarveSystems/inzure/cmd/inzure/internal/autocomplete"
+	"github.com/ivision-research/inzure/cmd/inzure/internal"
+	"github.com/ivision-research/inzure/cmd/inzure/internal/autocomplete"
 	"github.com/urfave/cli"
 )
 

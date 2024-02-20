@@ -1,6 +1,6 @@
 package internal
 
-import "github.com/CarveSystems/inzure/cmd/inzure/internal/autocomplete"
+import "github.com/ivision-research/inzure/cmd/inzure/internal/autocomplete"
 
 func SetupAutoCompletions() {
 	autocomplete.AddCompletions(

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	internal "github.com/CarveSystems/inzure/cmd/inzure/internal"
+	internal "github.com/ivision-research/inzure/cmd/inzure/internal"
 	"github.com/urfave/cli"
 )
 

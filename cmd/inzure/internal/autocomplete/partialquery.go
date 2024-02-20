@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 )
 
 type partialQueryString struct {

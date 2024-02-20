@@ -7,7 +7,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 	"github.com/urfave/cli"
 )
 

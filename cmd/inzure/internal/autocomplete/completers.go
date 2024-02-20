@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 )
 
 func TargetsAutoComplete(inc string, args []string) Completions {

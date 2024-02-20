@@ -8,7 +8,7 @@ import (
 
 	"text/template"
 
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 )
 
 type cmdArgs struct {

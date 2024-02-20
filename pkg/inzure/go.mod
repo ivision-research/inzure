@@ -1,4 +1,4 @@
-module github.com/CarveSystems/inzure/pkg/inzure
+module github.com/ivision-research/inzure/pkg/inzure
 
 go 1.18
 

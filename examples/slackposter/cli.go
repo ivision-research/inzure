@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/CarveSystems/inzure/pkg/inzure"
+	"github.com/ivision-research/inzure/pkg/inzure"
 )
 
 // Exit codes are int values that represent an exit code for a particular error.
