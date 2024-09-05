@@ -212,6 +212,8 @@ func (f *Function) FromAzure(fe *armappservice.FunctionEnvelope) {
 
 	if props.Language != nil {
 		switch strings.ToLower(*props.Language) {
+        case "dotnet-isolated":
+            fallthrough
 		case "dotnetassembly":
 			fallthrough
 		case "dotnet":
