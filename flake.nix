@@ -1,7 +1,7 @@
 {
   description = "inzure - a library for automated security testing of Azure environments";
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
   };
   outputs = { self, nixpkgs, flake-utils }: flake-utils.lib.eachDefaultSystem (system:
@@ -16,7 +16,7 @@
         program = "${packages.cli}/bin/inzure";
       };
 
-      packages.default = packages.lib;
+      packages.default = packages.cli;
 
       packages.cli = pkgs.buildGoModule {
         inherit version;
@@ -28,7 +28,7 @@
         rm -r "$sourceRoot/pkg/inzure/qs"
         rm -r "$sourceRoot/pkg/inzure/gen"
         '';
-        vendorHash = "sha256-xlusRvK/AZDknaq0uclDPneg1Ea3CyG6wcab4VCikVo=";
+        vendorHash = "sha256-qtABNcuhbK7vmMdGAHp0ct2GEWjGsaOs/GIuDljVJXE=";
         modRoot = "./cmd/inzure";
       };
     }
