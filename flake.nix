@@ -7,18 +7,18 @@
   outputs = { self, nixpkgs, flake-utils }: flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = nixpkgs.legacyPackages.${system};
-      version = "1.0.0";
+      version = "1.3.0";
 
     in rec {
 
       apps.inzure = {
         type = "app";
-        program = "${packages.cli}/bin/inzure";
+        program = "${packages.inzure}/bin/inzure";
       };
 
-      packages.default = packages.cli;
+      packages.default = packages.inzure;
 
-      packages.cli = pkgs.buildGoModule {
+      packages.inzure = pkgs.buildGoModule {
         inherit version;
         pname = "inzure";
         src = ./.;
@@ -28,7 +28,7 @@
         rm -r "$sourceRoot/pkg/inzure/qs"
         rm -r "$sourceRoot/pkg/inzure/gen"
         '';
-        vendorHash = "sha256-qtABNcuhbK7vmMdGAHp0ct2GEWjGsaOs/GIuDljVJXE=";
+        vendorHash = "sha256-nmKfhZodn3pK5cEZ6tx3qJYqaHg8SaHAxHG4ClACkI0=";
         modRoot = "./cmd/inzure";
       };
     }
