@@ -3,7 +3,7 @@ package inzure
 import (
 	"encoding/json"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 )
 
 type LoadBalancerProtocol = SecurityRuleProtocol

@@ -4,7 +4,7 @@ package inzure
 
 
 import (
-	azpkg "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	azpkg "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 )
 
 

@@ -1,6 +1,6 @@
 package inzure
 
-//go:generate go run gen/enum.go -type-name SecurityRuleProtocol -prefix Protocol -values All,TCP,UDP -azure-type SecurityRuleProtocol -azure-values SecurityRuleProtocolAsterisk,SecurityRuleProtocolTCP,SecurityRuleProtocolUDP -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork -no-string
+//go:generate go run gen/enum.go -type-name SecurityRuleProtocol -prefix Protocol -values All,TCP,UDP -azure-type SecurityRuleProtocol -azure-values SecurityRuleProtocolAsterisk,SecurityRuleProtocolTCP,SecurityRuleProtocolUDP -azure-import github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8 -no-string
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 )
 
 func (p SecurityRuleProtocol) String() string {

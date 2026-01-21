@@ -23,6 +23,9 @@ type ResourceGroup struct {
 	LoadBalancers             []*LoadBalancer
 	CosmosDBs                 []*CosmosDB
 	PostgresServers           []*PostgresServer
+	BastionHosts              []*BastionHost
+	Grafanas                  []*Grafana
+	SQLVirtualMachines        []*SQLVirtualMachine
 }
 
 func NewEmptyResourceGroup() *ResourceGroup {
@@ -43,6 +46,9 @@ func NewEmptyResourceGroup() *ResourceGroup {
 		LoadBalancers:             make([]*LoadBalancer, 0),
 		CosmosDBs:                 make([]*CosmosDB, 0),
 		PostgresServers:           make([]*PostgresServer, 0),
+		BastionHosts:              make([]*BastionHost, 0),
+		Grafanas:                  make([]*Grafana, 0),
+		SQLVirtualMachines:        make([]*SQLVirtualMachine, 0),
 	}
 }
 

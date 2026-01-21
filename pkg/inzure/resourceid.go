@@ -60,6 +60,10 @@ const (
 	CosmosDBT
 	PostgresServerT
 	PostgresDBT
+	BastionHostT
+	GrafanaT
+	PrivateEndpointConnectionT
+	SQLVirtualMachineT
 )
 
 // ParentResource is an intermediate piece of the resource ID string. For
@@ -102,30 +106,34 @@ var tagMap = map[string]AzureResourceTag{
 	// is also set for Postgres servers. For now, this will be fixed with a
 	// hack in the Postgres code, but this is probably a sign that I made too
 	// many assumptions when parsing these ID strings :(
-	"servers":                   SQLServerT,
-	"databases":                 SQLDatabaseT,
-	"networksecuritygroups":     NetworkSecurityGroupT,
-	"virtualnetworks":           VirtualNetworkT,
-	"virtualmachines":           VirtualMachineT,
-	"networkinterfaces":         NetworkInterfaceT,
-	"ipconfigurations":          IPConfigurationT,
-	"frontendipconfigurations":  FrontendIPConfigurationT,
-	"publicipaddresses":         PublicIPT,
-	"sites":                     WebAppT,
-	"providers":                 ProviderT,
-	"recommendations":           RecommendationT,
-	"apis":                      ApiT,
-	"service":                   ApiServiceT,
-	"operations":                ApiOperationT,
-	"backends":                  ApiBackendT,
-	"products":                  ApiServiceProductT,
-	"namespaces":                ServiceBusT,
-	"virtualmachinescalesets":   VirtualMachineScaleSetT,
-	"clusters":                  ServiceFabricT,
-	"schemas":                   ApiSchemaT,
-	"loadbalancers":             LoadBalancerT,
-	"applicationsecuritygroups": ApplicationSecurityGroupT,
-	"databaseaccounts":          CosmosDBT,
+	"servers":                    SQLServerT,
+	"databases":                  SQLDatabaseT,
+	"networksecuritygroups":      NetworkSecurityGroupT,
+	"virtualnetworks":            VirtualNetworkT,
+	"virtualmachines":            VirtualMachineT,
+	"networkinterfaces":          NetworkInterfaceT,
+	"ipconfigurations":           IPConfigurationT,
+	"frontendipconfigurations":   FrontendIPConfigurationT,
+	"publicipaddresses":          PublicIPT,
+	"sites":                      WebAppT,
+	"providers":                  ProviderT,
+	"recommendations":            RecommendationT,
+	"apis":                       ApiT,
+	"service":                    ApiServiceT,
+	"operations":                 ApiOperationT,
+	"backends":                   ApiBackendT,
+	"products":                   ApiServiceProductT,
+	"namespaces":                 ServiceBusT,
+	"virtualmachinescalesets":    VirtualMachineScaleSetT,
+	"clusters":                   ServiceFabricT,
+	"schemas":                    ApiSchemaT,
+	"loadbalancers":              LoadBalancerT,
+	"applicationsecuritygroups":  ApplicationSecurityGroupT,
+	"databaseaccounts":           CosmosDBT,
+	"bastionhosts":               BastionHostT,
+	"grafana":                    GrafanaT,
+	"privateendpointconnections": PrivateEndpointConnectionT,
+	"sqlvirtualmachines":         SQLVirtualMachineT,
 }
 
 func tagFrom(name string) AzureResourceTag {
@@ -194,6 +202,13 @@ func resourceStringScanFun(data []byte, atEOF bool) (advance int, token []byte, 
 		return len(data), data[:], nil
 	}
 	return 0, nil, nil
+}
+
+func (r *ResourceID) FromAzure(az *string) {
+	if az == nil {
+		r.setupEmpty()
+	}
+	r.FromID(*az)
 }
 
 // fromID will read the entire ID string and fill in the resource information
@@ -354,6 +369,8 @@ var qsTagMap = map[AzureResourceTag]string{
 	CosmosDBT:             "CosmosDBs",
 	LoadBalancerT:         "LoadBalancers",
 	ApiServiceT:           "APIServices",
+	BastionHostT:          "BastionHosts",
+	GrafanaT:              "Grafanas",
 }
 
 func (r *ResourceID) QueryString() (string, error) {

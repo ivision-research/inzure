@@ -23,14 +23,16 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dashboard/armdashboard"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-analytics/armdatalakeanalytics"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/datalake-store/armdatalakestore"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresql"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sqlvirtualmachine/armsqlvirtualmachine"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/go-autorest/autorest/azure"
 
@@ -120,6 +122,10 @@ type AzureAPI interface {
 	GetStorageAccounts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *StorageAccount
 	GetRedisServers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *RedisServer
 	GetKeyVaults(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *KeyVault
+
+	GetBastionHosts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *BastionHost
+	GetGrafanas(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *Grafana
+	GetSQLVirtualMachines(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *SQLVirtualMachine
 
 	// The following methods deal with classic accounts
 
@@ -1434,6 +1440,148 @@ func wrapPager[Original any, New any](orig *runtime.Pager[Original], transform f
 
 }
 
+func (impl *azureImpl) GetSQLVirtualMachines(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *SQLVirtualMachine {
+
+	client, err := armsqlvirtualmachine.NewSQLVirtualMachinesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(ctx, genericError(sub, SQLVirtualMachineT, "GetSQLVMClient", err), ec)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armsqlvirtualmachine.ListResult], error) {
+		base := client.NewListByResourceGroupPager(rg, nil)
+		return wrapPager(base,
+			func(in armsqlvirtualmachine.SQLVirtualMachinesClientListByResourceGroupResponse) armsqlvirtualmachine.ListResult {
+				return in.ListResult
+			},
+			func(page armsqlvirtualmachine.ListResult) *string { return page.NextLink },
+		), nil
+	}
+
+	handler := func(
+		az armsqlvirtualmachine.ListResult,
+		out chan<- *SQLVirtualMachine,
+	) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptySQLVirtualMachine()
+			it.FromAzure(v)
+			sendChan(ctx, it, out)
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx, getter, handler, genericErrorTransform(sub, SQLVirtualMachineT, "ListSQLVMs"), ec)
+
+}
+
+func (impl *azureImpl) GetGrafanas(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *Grafana {
+
+	client, err := armdashboard.NewGrafanaClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(ctx, genericError(sub, GrafanaT, "GetGrafanaClient", err), ec)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armdashboard.ManagedGrafanaListResponse], error) {
+		base := client.NewListByResourceGroupPager(rg, nil)
+		return wrapPager(base,
+			func(in armdashboard.GrafanaClientListByResourceGroupResponse) armdashboard.ManagedGrafanaListResponse {
+				return in.ManagedGrafanaListResponse
+			},
+			func(page armdashboard.ManagedGrafanaListResponse) *string { return page.NextLink },
+		), nil
+	}
+
+	handler := func(
+		az armdashboard.ManagedGrafanaListResponse,
+		out chan<- *Grafana,
+	) (bool, error) {
+		for _, v := range az.Value {
+			it := NewEmptyGrafana()
+			it.FromAzure(v)
+			sendChan(ctx, it, out)
+		}
+		return true, nil
+	}
+
+	return handlePager(ctx, getter, handler, genericErrorTransform(sub, GrafanaT, "ListGrafanas"), ec)
+
+}
+
+func (impl *azureImpl) GetBastionHosts(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *BastionHost {
+
+	client, err := armnetwork.NewBastionHostsClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(ctx, genericError(sub, BastionHostT, "GetBastionHostClient", err), ec)
+		return nil
+	}
+
+	ipclient, err := armnetwork.NewPublicIPAddressesClient(sub, impl.tokenCredential, impl.clientOptions)
+	if err != nil {
+		sendErr(ctx, genericError(sub, BastionHostT, "GetPublicIPClient", err), ec)
+		return nil
+	}
+
+	getter := func() (*runtime.Pager[armnetwork.BastionHostListResult], error) {
+		base := client.NewListByResourceGroupPager(rg, nil)
+		return wrapPager(base,
+			func(in armnetwork.BastionHostsClientListByResourceGroupResponse) armnetwork.BastionHostListResult {
+				return in.BastionHostListResult
+			},
+			func(page armnetwork.BastionHostListResult) *string { return page.NextLink },
+		), nil
+	}
+
+	handler := func(
+		az armnetwork.BastionHostListResult,
+		out chan<- *BastionHost,
+	) (bool, error) {
+
+		var wg sync.WaitGroup
+
+		for _, v := range az.Value {
+			it := NewEmptyBastionHost()
+			it.FromAzure(v)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				impl.fillBastionHost(ctx, sub, ipclient, it, out, ec)
+				sendChan(ctx, it, out)
+			}()
+		}
+
+		wg.Wait()
+
+		return true, nil
+	}
+
+	return handlePager(ctx, getter, handler, genericErrorTransform(sub, BastionHostT, "ListBastionHosts"), ec)
+
+}
+
+func (impl *azureImpl) fillBastionHost(ctx context.Context, sub string, ipclient *armnetwork.PublicIPAddressesClient, bh *BastionHost, out chan<- *BastionHost, ec chan<- error) {
+
+	if bh.IPConfigurations != nil {
+		for i := range bh.IPConfigurations {
+
+			config := &bh.IPConfigurations[i]
+
+			ipm := config.PublicIP.Meta
+			if ipm.Tag == ResourceUnsetT {
+				continue
+			}
+			res, err := ipclient.Get(ctx, ipm.ResourceGroupName, ipm.Name, nil)
+			if err != nil {
+				sendErr(ctx, genericError(sub, PublicIPT, "Get", err), ec)
+				continue
+
+			}
+			config.PublicIP.FromAzure(&res.PublicIPAddress)
+
+		}
+	}
+}
+
 func (impl *azureImpl) GetLoadBalancers(ctx context.Context, sub string, rg string, ec chan<- error) <-chan *LoadBalancer {
 	client, err := armnetwork.NewLoadBalancersClient(sub, impl.tokenCredential, impl.clientOptions)
 	if err != nil {
@@ -2251,7 +2399,7 @@ func (impl *azureImpl) getContainers(ctx context.Context, sa *StorageAccount, ec
 
 func getTokenCredentials(opts *azcore.ClientOptions) (tokenCred azcore.TokenCredential, err error) {
 	sources := make([]azcore.TokenCredential, 0, 3)
-	envOpts := azidentity.EnvironmentCredentialOptions{*opts}
+	envOpts := azidentity.EnvironmentCredentialOptions{ClientOptions: *opts}
 	tokenCred, err = azidentity.NewEnvironmentCredential(&envOpts)
 	if err == nil {
 		sources = append(sources, tokenCred)
@@ -2307,16 +2455,16 @@ func getTokenCredentialsWithTenant(sources *[]azcore.TokenCredential, tenantId s
 // mentioned in the documentation there. That is, the following environmental
 // variables need to be set:
 //
-//		- AZURE_TENANT_ID - This always needs to be set.
+//   - AZURE_TENANT_ID - This always needs to be set.
 //
 // Then you can either log in as the previously created application with:
 //
-//		- AZURE_CLIENT_ID - This is the Inzure Tool client ID setup before
-//		- AZURE_CLIENT_SECRET - This is the tool's secret
+//   - AZURE_CLIENT_ID - This is the Inzure Tool client ID setup before
+//   - AZURE_CLIENT_SECRET - This is the tool's secret
 //
 // Or login with your username and password with just:
 //
-//		- AZURE_CLIENT_ID
+//   - AZURE_CLIENT_ID
 //
 // This triggers the device login flow you should be familiar with from the
 // Azure CLI.
@@ -2324,10 +2472,10 @@ func getTokenCredentialsWithTenant(sources *[]azcore.TokenCredential, tenantId s
 // Note that AZURE_ENVIRONMENT can also be set to change the environment.
 // Valid values are:
 //
-// 	- AZURECHINACLOUD
-// 	- AZUREGERMANCLOUD
-// 	- AZUREPUBLICCLOUD
-// 	- AZUREUSGOVERNMENTCLOUD
+//   - AZURECHINACLOUD
+//   - AZUREGERMANCLOUD
+//   - AZUREPUBLICCLOUD
+//   - AZUREUSGOVERNMENTCLOUD
 func NewAzureAPI() (AzureAPI, error) {
 	api := &azureImpl{
 		doClassic:     false,

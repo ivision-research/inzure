@@ -29,6 +29,8 @@ const (
 	TargetCosmosDBs
 	TargetLoadBalancers
 	TargetPostgres
+	TargetBastionHosts
+	TargetGrafanas
 )
 
 const (
@@ -45,6 +47,8 @@ const (
 	TargetCosmosDBsString       = "cosmosdbs"
 	TargetLoadBalancersString   = "loadbalancers"
 	TargetPostgresString        = "postgres"
+	TargetBastionHostsString    = "bastionhosts"
+	TargetGrafanasString        = "grafanas"
 )
 
 // AvailableTargets is a map containing all available targets for easy lookup
@@ -60,6 +64,8 @@ var AvailableTargets = map[string]SearchTarget{
 	TargetCosmosDBsString:       TargetCosmosDBs,
 	TargetLoadBalancersString:   TargetLoadBalancers,
 	TargetPostgresString:        TargetPostgres,
+	TargetBastionHostsString:    TargetBastionHosts,
+	TargetGrafanasString:        TargetGrafanas,
 }
 
 // SubscriptionID is just a combined UUID and optional Alias for a
@@ -305,6 +311,19 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 						g.SQLServers = append(g.SQLServers, serv)
 					}
 				}(rg)
+
+				wg.Add(1)
+
+				go func(g *ResourceGroup) {
+					s.log("[Begin] SQL VMs in `%s`/`%s`\n", s, g.Meta.Name)
+					defer s.log("[End] SQL VMs in `%s`/`%s`\n", s, g.Meta.Name)
+					defer wg.Done()
+					for vm := range azure.GetSQLVirtualMachines(ctx, g.Meta.Subscription, g.Meta.Name, ec) {
+						s.log("Found SQL VM `%s`\n", vm.Meta.Name)
+						g.SQLVirtualMachines = append(g.SQLVirtualMachines, vm)
+					}
+				}(rg)
+
 			}
 
 			if _, do := s.searchTargets[TargetAPIs]; do {
@@ -332,6 +351,33 @@ func (s *Subscription) SearchAllTargets(ctx context.Context, ec chan<- error) {
 					}
 				}(rg)
 			}
+
+			if _, do := s.searchTargets[TargetGrafanas]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("[Begin] Grafanas in `%s`\n", s)
+					defer s.log("[End] Grafanas in `%s`\n", s)
+					defer wg.Done()
+					for gf := range azure.GetGrafanas(ctx, s.ID, g.Meta.Name, ec) {
+						s.log("Found Grafana`%s`\n", gf.Meta.Name)
+						g.Grafanas = append(g.Grafanas, gf)
+					}
+				}(rg)
+			}
+
+			if _, do := s.searchTargets[TargetBastionHosts]; do {
+				wg.Add(1)
+				go func(g *ResourceGroup) {
+					s.log("[Begin] Bastion Hosts in `%s`\n", s)
+					defer s.log("[End] Bastion Hosts in `%s`\n", s)
+					defer wg.Done()
+					for bh := range azure.GetBastionHosts(ctx, s.ID, g.Meta.Name, ec) {
+						s.log("Found Bastion Host `%s`\n", bh.Meta.Name)
+						g.BastionHosts = append(g.BastionHosts, bh)
+					}
+				}(rg)
+			}
+
 			if _, do := s.searchTargets[TargetLoadBalancers]; do {
 				wg.Add(1)
 				go func(g *ResourceGroup) {

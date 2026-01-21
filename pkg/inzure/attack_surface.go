@@ -18,6 +18,8 @@ type AttackSurface struct {
 	DataLakeStores    []string
 	KeyVaults         []string
 	PublicContainers  []string
+	BastionHosts      []string
+	Grafanas          []string
 	APIServices       []APIServiceAttackSurface
 }
 
@@ -51,6 +53,8 @@ func NewEmptyAttackSurface() AttackSurface {
 		DataLakeStores:    make([]string, 0),
 		KeyVaults:         make([]string, 0),
 		PublicContainers:  make([]string, 0),
+		BastionHosts:      make([]string, 0),
+		Grafanas:          make([]string, 0),
 		APIServices:       make([]APIServiceAttackSurface, 0),
 	}
 }
@@ -97,6 +101,23 @@ func (s *Subscription) GetAttackSurface() AttackSurface {
 
 		for _, kv := range rg.KeyVaults {
 			as.KeyVaults = append(as.KeyVaults, kv.URL)
+		}
+
+		for _, gf := range rg.Grafanas {
+			if gf.Endpoint != "" {
+				as.Grafanas = append(as.Grafanas, gf.Endpoint)
+			}
+
+		}
+
+		for _, bh := range rg.BastionHosts {
+			for _, ipc := range bh.IPConfigurations {
+				if ipc.PublicIP.FQDN != "" {
+					as.BastionHosts = append(as.BastionHosts, ipc.PublicIP.FQDN)
+				} else if ipc.PublicIP.IP != "" {
+					as.BastionHosts = append(as.BastionHosts, ipc.PublicIP.IP)
+				}
+			}
 		}
 
 		for _, sa := range rg.StorageAccounts {

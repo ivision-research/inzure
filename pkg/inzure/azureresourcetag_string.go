@@ -50,15 +50,17 @@ func _() {
 	_ = x[CosmosDBT-39]
 	_ = x[PostgresServerT-40]
 	_ = x[PostgresDBT-41]
+	_ = x[BastionHostT-42]
 }
 
-const _AzureResourceTag_name = "ResourceUnsetTResourceUnknownTResourceGroupTStorageAccountTContainerTQueueTFileShareTTableTProviderTNetworkSecurityGroupTVirtualNetworkTVirtualMachineTSubnetTNetworkInterfaceTIPConfigurationTPublicIPTWebAppTFunctionTDataLakeTDataLakeStoreTDataLakeAnalyticsTSQLServerTWebAppSlotTRedisServerTRecommendationTSQLDatabaseTVirtualMachineScaleSetTApiTApiServiceTApiOperationTApiBackendTApiServiceProductTServiceBusTServiceFabricTApiSchemaTLoadBalancerTFrontendIPConfigurationTApplicationSecurityGroupTKeyVaultTCosmosDBTPostgresServerTPostgresDBT"
+const _AzureResourceTag_name = "ResourceUnsetTResourceUnknownTResourceGroupTStorageAccountTContainerTQueueTFileShareTTableTProviderTNetworkSecurityGroupTVirtualNetworkTVirtualMachineTSubnetTNetworkInterfaceTIPConfigurationTPublicIPTWebAppTFunctionTDataLakeTDataLakeStoreTDataLakeAnalyticsTSQLServerTWebAppSlotTRedisServerTRecommendationTSQLDatabaseTVirtualMachineScaleSetTApiTApiServiceTApiOperationTApiBackendTApiServiceProductTServiceBusTServiceFabricTApiSchemaTLoadBalancerTFrontendIPConfigurationTApplicationSecurityGroupTKeyVaultTCosmosDBTPostgresServerTPostgresDBTBastionHostT"
 
-var _AzureResourceTag_index = [...]uint16{0, 14, 30, 44, 59, 69, 75, 85, 91, 100, 121, 136, 151, 158, 175, 191, 200, 207, 216, 225, 239, 257, 267, 278, 290, 305, 317, 340, 344, 355, 368, 379, 397, 408, 422, 432, 445, 469, 494, 503, 512, 527, 538}
+var _AzureResourceTag_index = [...]uint16{0, 14, 30, 44, 59, 69, 75, 85, 91, 100, 121, 136, 151, 158, 175, 191, 200, 207, 216, 225, 239, 257, 267, 278, 290, 305, 317, 340, 344, 355, 368, 379, 397, 408, 422, 432, 445, 469, 494, 503, 512, 527, 538, 550}
 
 func (i AzureResourceTag) String() string {
-	if i >= AzureResourceTag(len(_AzureResourceTag_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_AzureResourceTag_index)-1 {
 		return "AzureResourceTag(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _AzureResourceTag_name[_AzureResourceTag_index[i]:_AzureResourceTag_index[i+1]]
+	return _AzureResourceTag_name[_AzureResourceTag_index[idx]:_AzureResourceTag_index[idx+1]]
 }
