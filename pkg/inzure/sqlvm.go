@@ -1,6 +1,8 @@
 package inzure
 
 import (
+	"encoding/json"
+
 	azsqlvm "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sqlvirtualmachine/armsqlvirtualmachine"
 )
 
@@ -24,6 +26,52 @@ type SQLVirtualMachine struct {
 	KeyVaultCredentialName    string
 	StorageAccountURL         string
 	StorageContainerName      string
+}
+
+func (it *SQLVirtualMachine) UnmarshalJSON(js []byte) error {
+	it.Port = NewEmptyPort()
+	tmp := struct {
+		Meta                      *ResourceID
+		GroupResourceId           *ResourceID
+		AutoUpgrade               *UnknownBool
+		AutoPatch                 *UnknownBool
+		AutoBackup                *UnknownBool
+		EncryptAutoBackup         *UnknownBool
+		BackupSystemDBs           *UnknownBool
+		AssessmentEnabled         *UnknownBool
+		AssessmentScheduleEnabled *UnknownBool
+		KeyVaultEnabled           *UnknownBool
+		LeastPrivilegeModeEnabled *UnknownBool
+		IsPublic                  *UnknownBool
+		Port                      *AzurePort
+		MangementType             *string
+		KeyVaultServicePrincipal  *string
+		KeyVaultURL               *string
+		KeyVaultCredentialName    *string
+		StorageAccountURL         *string
+		StorageContainerName      *string
+	}{
+		Meta:                      &it.Meta,
+		GroupResourceId:           &it.GroupResourceId,
+		AutoUpgrade:               &it.AutoUpgrade,
+		AutoPatch:                 &it.AutoPatch,
+		AutoBackup:                &it.AutoBackup,
+		EncryptAutoBackup:         &it.EncryptAutoBackup,
+		BackupSystemDBs:           &it.BackupSystemDBs,
+		AssessmentEnabled:         &it.AssessmentEnabled,
+		AssessmentScheduleEnabled: &it.AssessmentScheduleEnabled,
+		KeyVaultEnabled:           &it.KeyVaultEnabled,
+		LeastPrivilegeModeEnabled: &it.LeastPrivilegeModeEnabled,
+		IsPublic:                  &it.IsPublic,
+		Port:                      &it.Port,
+		MangementType:             &it.MangementType,
+		KeyVaultServicePrincipal:  &it.KeyVaultServicePrincipal,
+		KeyVaultURL:               &it.KeyVaultURL,
+		KeyVaultCredentialName:    &it.KeyVaultCredentialName,
+		StorageAccountURL:         &it.StorageAccountURL,
+		StorageContainerName:      &it.StorageContainerName,
+	}
+	return json.Unmarshal(js, &tmp)
 }
 
 func NewEmptySQLVirtualMachine() *SQLVirtualMachine {

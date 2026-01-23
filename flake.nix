@@ -28,7 +28,7 @@
         rm -r "$sourceRoot/pkg/inzure/qs"
         rm -r "$sourceRoot/pkg/inzure/gen"
         '';
-        vendorHash = "sha256-nmKfhZodn3pK5cEZ6tx3qJYqaHg8SaHAxHG4ClACkI0=";
+        vendorHash = "sha256-v4ywx0Q7EUyNt8qB7WvKiKBVVG28dAlbb/zrQFW60SY=";
         modRoot = "./cmd/inzure";
       };
     }
